@@ -21,8 +21,8 @@ from .config import ConfigManager
 from .engine import FileEngine, OpState
 from .hook import KeyboardHook
 from .logger import configure_root_logger, set_debug_mode
+from .notify import show_toast
 from .pipe_server import PipeServer
-from .progress import ProgressWindow, ProgressCallback
 from .register import ensure_dll_registered, is_dll_registered, register_dll, get_dll_path, run_as_admin
 from .shell import ShellHelper
 from .settings import SettingsWindow
@@ -147,6 +147,17 @@ class FastFileOpApp:
         thread = threading.Thread(target=_show, daemon=True)
         thread.start()
 
+    @staticmethod
+    def _format_size(b: float) -> str:
+        """Format bytes to human readable size"""
+        if b >= 1024 ** 3:
+            return f"{b / 1024**3:.1f} GB"
+        elif b >= 1024 ** 2:
+            return f"{b / 1024**2:.1f} MB"
+        elif b >= 1024:
+            return f"{b / 1024:.1f} KB"
+        return f"{b:.0f} B"
+
     def _quit(self):
         """Quit application"""
         logger.info("Shutting down FastFileOp...")
@@ -227,22 +238,17 @@ class FastFileOpApp:
             except Exception:
                 pass
 
-        # Create progress window
+        # Show start notification
         operation = "Moving" if is_cut else "Copying"
-        progress_win = ProgressWindow(
-            title="FastFileOp",
-            operation=operation,
-            total_files=len(files),
-            total_bytes=total_bytes,
-            on_pause=self._on_progress_pause,
-            on_cancel=self._on_progress_cancel,
+        size_str = self._format_size(total_bytes)
+        show_toast(
+            f"FastFileOp - {operation}",
+            f"{len(files)} files ({size_str}) -> {Path(dst_dir).name}",
         )
-        progress_win.show()
 
         # Execute operation
         with self._engine_lock:
             self.engine = self._create_engine()
-            self.engine.progress_callback = ProgressCallback(progress_win)
 
         def _run():
             try:
@@ -258,22 +264,32 @@ class FastFileOpApp:
                     logger.warning(f"Operation completed with {len(failed)} failures")
                     for fp in failed:
                         logger.warning(f"  Failed: {fp.src} - {fp.error}")
-                    progress_win.set_complete(False, f"{len(failed)} files failed")
+                    show_toast(
+                        "FastFileOp - Warning",
+                        f"{operation} completed with {len(failed)} failures",
+                        tag="fastfileop_op",
+                    )
                 else:
-                    progress_win.set_complete(True)
-
-                # Auto-close after 2 seconds on success
-                if not failed:
-                    time.sleep(1.5)
-                    progress_win.close()
+                    elapsed = time.time() - start_time
+                    speed_str = self._format_size(total_bytes / max(elapsed, 0.001)) + "/s"
+                    show_toast(
+                        "FastFileOp - Done",
+                        f"{operation} {len(files)} files ({speed_str})",
+                        tag="fastfileop_op",
+                    )
 
             except Exception as e:
                 logger.error(f"File operation error: {e}")
-                progress_win.set_complete(False, str(e))
+                show_toast(
+                    "FastFileOp - Error",
+                    f"{operation} failed: {e}",
+                    tag="fastfileop_op",
+                )
             finally:
                 with self._engine_lock:
                     self.engine = None
 
+        start_time = time.time()
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
 
@@ -296,22 +312,16 @@ class FastFileOpApp:
             return
 
         permanent = shift_pressed
-
-        # Create progress window
         operation = "Deleting permanently" if permanent else "Moving to Recycle Bin"
-        progress_win = ProgressWindow(
-            title="FastFileOp",
-            operation=operation,
-            total_files=len(files),
-            total_bytes=0,  # Delete doesn't track bytes
-            on_pause=self._on_progress_pause,
-            on_cancel=self._on_progress_cancel,
+
+        # Show start notification
+        show_toast(
+            "FastFileOp - Deleting",
+            f"{len(files)} items ({operation})",
         )
-        progress_win.show()
 
         with self._engine_lock:
             self.engine = self._create_engine()
-            self.engine.progress_callback = ProgressCallback(progress_win)
 
         def _run():
             try:
@@ -322,20 +332,25 @@ class FastFileOpApp:
                 failed = self.engine.get_failed()
                 if failed:
                     logger.warning(f"Delete completed with {len(failed)} failures")
-                    for fp in failed:
-                        logger.warning(f"  Failed: {fp.src} - {fp.error}")
-                    progress_win.set_complete(False, f"{len(failed)} files failed")
+                    show_toast(
+                        "FastFileOp - Warning",
+                        f"Delete completed with {len(failed)} failures",
+                        tag="fastfileop_op",
+                    )
                 else:
-                    progress_win.set_complete(True)
-
-                # Auto-close after 1.5 seconds on success
-                if not failed:
-                    time.sleep(1)
-                    progress_win.close()
+                    show_toast(
+                        "FastFileOp - Done",
+                        f"Deleted {len(files)} items",
+                        tag="fastfileop_op",
+                    )
 
             except Exception as e:
                 logger.error(f"Delete operation error: {e}")
-                progress_win.set_complete(False, str(e))
+                show_toast(
+                    "FastFileOp - Error",
+                    f"Delete failed: {e}",
+                    tag="fastfileop_op",
+                )
             finally:
                 with self._engine_lock:
                     self.engine = None
