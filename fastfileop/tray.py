@@ -45,26 +45,35 @@ def _create_icon_image(size: int = 64, color: tuple = (41, 128, 185)) -> Image.I
         img = Image.open(io.BytesIO(ICON_DATA))
         if img.size != (size, size):
             img = img.resize((size, size), Image.Resampling.LANCZOS)
+        # Convert to RGBA if needed
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
         return img
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to load embedded icon: {e}")
 
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    from PIL import ImageDraw
-    draw = ImageDraw.Draw(img)
-    margin = 4
-    draw.rounded_rectangle(
-        [(margin, margin), (size - margin, size - margin)],
-        radius=12,
-        fill=color,
-    )
+    # Fallback: create simple colored icon
     try:
-        from PIL import ImageFont
-        font = ImageFont.truetype("arial.ttf", size // 2)
-    except Exception:
-        font = ImageFont.load_default()
-    draw.text((size // 3, size // 6), "F", fill=(255, 255, 255), font=font)
-    return img
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(img)
+        margin = 4
+        draw.rounded_rectangle(
+            [(margin, margin), (size - margin, size - margin)],
+            radius=12,
+            fill=color,
+        )
+        try:
+            from PIL import ImageFont
+            font = ImageFont.truetype("arial.ttf", size // 2)
+        except Exception:
+            font = ImageFont.load_default()
+        draw.text((size // 3, size // 6), "F", fill=(255, 255, 255), font=font)
+        return img
+    except Exception as e:
+        logger.error(f"Failed to create fallback icon: {e}")
+        # Last resort: return a simple colored square
+        return Image.new("RGBA", (size, size), color + (255,))
 
 
 def _create_paused_image(size: int = 64) -> Image.Image:
@@ -215,28 +224,48 @@ class TrayIcon:
 
     def run(self):
         """Run tray icon (blocking)"""
-        if self._instability:
-            image = _create_warning_image()
-        elif self._paused:
-            image = _create_paused_image()
-        else:
-            image = _create_icon_image()
+        try:
+            if self._instability:
+                image = _create_warning_image()
+            elif self._paused:
+                image = _create_paused_image()
+            else:
+                image = _create_icon_image()
 
-        self._icon = pystray.Icon(
-            name="FastFileOp",
-            icon=image,
-            title="FastFileOp - High-Speed File Operations",
-            menu=self._get_menu(),
-        )
+            logger.debug(f"Creating tray icon with image size: {image.size}")
 
-        logger.info("System tray icon created")
-        self._icon.run()
+            self._icon = pystray.Icon(
+                name="FastFileOp",
+                icon=image,
+                title="FastFileOp - High-Speed File Operations",
+                menu=self._get_menu(),
+            )
+
+            logger.info("System tray icon created successfully")
+            self._icon.run()
+        except Exception as e:
+            logger.error(f"Failed to create/run tray icon: {e}")
+            raise
 
     def run_threaded(self) -> threading.Thread:
         """Run tray icon in background thread"""
-        thread = threading.Thread(target=self.run, daemon=True)
+        thread = threading.Thread(target=self._run_safe, daemon=False)  # Not daemon to keep alive
         thread.start()
         return thread
+
+    def _run_safe(self):
+        """Safe wrapper for tray run with error handling"""
+        try:
+            self.run()
+        except Exception as e:
+            logger.error(f"Tray thread error: {e}")
+            # Try to restart tray after a delay
+            import time
+            time.sleep(2)
+            try:
+                self.run()
+            except Exception as e2:
+                logger.error(f"Tray restart failed: {e2}")
 
     def stop(self):
         """Stop tray icon"""
