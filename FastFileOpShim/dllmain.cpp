@@ -2,9 +2,127 @@
 
 #include "stdafx.h"
 #include "CopyHook.h"
+#include "DropTarget.h"
 
 HINSTANCE g_hInst = NULL;
 DWORD g_dwRegister = 0;
+
+// Class Factory for DropTarget
+class CDropTargetClassFactory : public IClassFactory, public RefCount
+{
+public:
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override
+    {
+        if (riid == IID_IUnknown || riid == IID_IClassFactory)
+        {
+            *ppv = static_cast<IClassFactory*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = NULL;
+        return E_NOINTERFACE;
+    }
+
+    STDMETHODIMP_(ULONG) AddRef() override { return RefCount::AddRef(); }
+    STDMETHODIMP_(ULONG) Release() override { return RefCount::Release(); }
+
+    STDMETHODIMP CreateInstance(IUnknown* pUnkOuter, REFIID riid, void** ppv) override
+    {
+        if (pUnkOuter) return CLASS_E_NOAGGREGATION;
+
+        CFastFileOpDropTarget* pObj = new CFastFileOpDropTarget();
+        if (!pObj) return E_OUTOFMEMORY;
+
+        HRESULT hr = pObj->QueryInterface(riid, ppv);
+        pObj->Release();
+        return hr;
+    }
+
+    STDMETHODIMP LockServer(BOOL fLock) override { return S_OK; }
+};
+
+// Helper: format CLSID as "{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}"
+static void FormatCLSID(const CLSID& clsid, WCHAR* buf, size_t bufLen)
+{
+    swprintf_s(buf, bufLen,
+        L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+        clsid.Data1, clsid.Data2, clsid.Data3,
+        clsid.Data4[0], clsid.Data4[1], clsid.Data4[2], clsid.Data4[3],
+        clsid.Data4[4], clsid.Data4[5], clsid.Data4[6], clsid.Data4[7]);
+}
+
+// Helper: register a CLSID's InprocServer32 and description
+static void RegisterCLSID(const CLSID& clsid, LPCWSTR description, LPCWSTR modulePath)
+{
+    WCHAR szKey[MAX_PATH * 2];
+    WCHAR szCLSID[64];
+    HKEY hKey;
+
+    FormatCLSID(clsid, szCLSID, 64);
+
+    // CLSID\{clsid}
+    swprintf_s(szKey, MAX_PATH * 2, L"CLSID\\%s", szCLSID);
+    if (RegCreateKeyExW(HKEY_CLASSES_ROOT, szKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
+    {
+        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)description,
+            (DWORD)((wcslen(description) + 1) * sizeof(WCHAR)));
+        RegCloseKey(hKey);
+    }
+
+    // CLSID\{clsid}\InprocServer32
+    wcscat_s(szKey, L"\\InprocServer32");
+    if (RegCreateKeyExW(HKEY_CLASSES_ROOT, szKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
+    {
+        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)modulePath,
+            (DWORD)((wcslen(modulePath) + 1) * sizeof(WCHAR)));
+        RegSetValueExW(hKey, L"ThreadingModel", 0, REG_SZ,
+            (const BYTE*)L"Apartment", sizeof(L"Apartment"));
+        RegCloseKey(hKey);
+    }
+}
+
+// Helper: unregister a CLSID and all subkeys
+static void UnregisterCLSID(const CLSID& clsid)
+{
+    WCHAR szKey[MAX_PATH * 2];
+    WCHAR szCLSID[64];
+
+    FormatCLSID(clsid, szCLSID, 64);
+
+    // Delete InprocServer32 first
+    swprintf_s(szKey, MAX_PATH * 2, L"CLSID\\%s\\InprocServer32", szCLSID);
+    RegDeleteKeyW(HKEY_CLASSES_ROOT, szKey);
+
+    // Delete CLSID root
+    swprintf_s(szKey, MAX_PATH * 2, L"CLSID\\%s", szCLSID);
+    RegDeleteKeyW(HKEY_CLASSES_ROOT, szKey);
+}
+
+// Helper: register a handler under ShellEx (CopyHookHandlers, DragDropHandlers, etc.)
+static void RegisterShellExHandler(const CLSID& clsid, LPCWSTR handlerPath, LPCWSTR handlerName)
+{
+    WCHAR szCLSID[64];
+    WCHAR szFullKey[MAX_PATH * 2];
+    HKEY hKey;
+
+    FormatCLSID(clsid, szCLSID, 64);
+
+    swprintf_s(szFullKey, MAX_PATH * 2, L"%s\\%s", handlerPath, handlerName);
+    if (RegCreateKeyExW(HKEY_CLASSES_ROOT, szFullKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
+    {
+        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)szCLSID,
+            (DWORD)((wcslen(szCLSID) + 1) * sizeof(WCHAR)));
+        RegCloseKey(hKey);
+    }
+}
+
+// Helper: unregister a handler from ShellEx
+static void UnregisterShellExHandler(LPCWSTR handlerPath, LPCWSTR handlerName)
+{
+    WCHAR szFullKey[MAX_PATH * 2];
+    swprintf_s(szFullKey, MAX_PATH * 2, L"%s\\%s", handlerPath, handlerName);
+    RegDeleteKeyW(HKEY_CLASSES_ROOT, szFullKey);
+}
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
@@ -32,6 +150,16 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv)
         return hr;
     }
 
+    if (rclsid == CLSID_FastFileOpDropTarget)
+    {
+        CDropTargetClassFactory* pFactory = new CDropTargetClassFactory();
+        if (!pFactory) return E_OUTOFMEMORY;
+
+        HRESULT hr = pFactory->QueryInterface(riid, ppv);
+        pFactory->Release();
+        return hr;
+    }
+
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
@@ -45,62 +173,19 @@ STDAPI DllRegisterServer()
     WCHAR szModulePath[MAX_PATH];
     GetModuleFileNameW(g_hInst, szModulePath, MAX_PATH);
 
-    // Register CopyHook
-    WCHAR szKey[MAX_PATH * 2];
+    // ── CopyHook ───────────────────────────────────────────────
+    RegisterCLSID(CLSID_FastFileOpCopyHook, L"FastFileOp CopyHook", szModulePath);
+    RegisterShellExHandler(CLSID_FastFileOpCopyHook,
+        L"Directory\\ShellEx\\CopyHookHandlers", L"FastFileOp");
+    RegisterShellExHandler(CLSID_FastFileOpCopyHook,
+        L"Folder\\ShellEx\\CopyHookHandlers", L"FastFileOp");
 
-    // HKCR\CLSID\{CLSID}
-    swprintf_s(szKey, L"CLSID\\%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",
-        CLSID_FastFileOpCopyHook.Data1, CLSID_FastFileOpCopyHook.Data2,
-        CLSID_FastFileOpCopyHook.Data3, CLSID_FastFileOpCopyHook.Data4[0],
-        CLSID_FastFileOpCopyHook.Data4[1], CLSID_FastFileOpCopyHook.Data4[2],
-        CLSID_FastFileOpCopyHook.Data4[3], CLSID_FastFileOpCopyHook.Data4[4],
-        CLSID_FastFileOpCopyHook.Data4[5], CLSID_FastFileOpCopyHook.Data4[6],
-        CLSID_FastFileOpCopyHook.Data4[7]);
-
-    HKEY hKey;
-    if (RegCreateKeyExW(HKEY_CLASSES_ROOT, szKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
-    {
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)L"FastFileOp CopyHook", sizeof(L"FastFileOp CopyHook"));
-        RegCloseKey(hKey);
-    }
-
-    // InprocServer32
-    wcscat_s(szKey, L"\\InprocServer32");
-    if (RegCreateKeyExW(HKEY_CLASSES_ROOT, szKey, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
-    {
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)szModulePath, (DWORD)(wcslen(szModulePath) + 1) * sizeof(WCHAR));
-        RegSetValueExW(hKey, L"ThreadingModel", 0, REG_SZ, (const BYTE*)L"Apartment", sizeof(L"Apartment"));
-        RegCloseKey(hKey);
-    }
-
-    // Register under CopyHookHandlers
-    if (RegCreateKeyExW(HKEY_CLASSES_ROOT, L"Directory\\ShellEx\\CopyHookHandlers\\FastFileOp", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
-    {
-        WCHAR szCLSID[64];
-        swprintf_s(szCLSID, L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-            CLSID_FastFileOpCopyHook.Data1, CLSID_FastFileOpCopyHook.Data2,
-            CLSID_FastFileOpCopyHook.Data3, CLSID_FastFileOpCopyHook.Data4[0],
-            CLSID_FastFileOpCopyHook.Data4[1], CLSID_FastFileOpCopyHook.Data4[2],
-            CLSID_FastFileOpCopyHook.Data4[3], CLSID_FastFileOpCopyHook.Data4[4],
-            CLSID_FastFileOpCopyHook.Data4[5], CLSID_FastFileOpCopyHook.Data4[6],
-            CLSID_FastFileOpCopyHook.Data4[7]);
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)szCLSID, (DWORD)(wcslen(szCLSID) + 1) * sizeof(WCHAR));
-        RegCloseKey(hKey);
-    }
-
-    if (RegCreateKeyExW(HKEY_CLASSES_ROOT, L"Folder\\ShellEx\\CopyHookHandlers\\FastFileOp", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) == ERROR_SUCCESS)
-    {
-        WCHAR szCLSID[64];
-        swprintf_s(szCLSID, L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-            CLSID_FastFileOpCopyHook.Data1, CLSID_FastFileOpCopyHook.Data2,
-            CLSID_FastFileOpCopyHook.Data3, CLSID_FastFileOpCopyHook.Data4[0],
-            CLSID_FastFileOpCopyHook.Data4[1], CLSID_FastFileOpCopyHook.Data4[2],
-            CLSID_FastFileOpCopyHook.Data4[3], CLSID_FastFileOpCopyHook.Data4[4],
-            CLSID_FastFileOpCopyHook.Data4[5], CLSID_FastFileOpCopyHook.Data4[6],
-            CLSID_FastFileOpCopyHook.Data4[7]);
-        RegSetValueExW(hKey, NULL, 0, REG_SZ, (const BYTE*)szCLSID, (DWORD)(wcslen(szCLSID) + 1) * sizeof(WCHAR));
-        RegCloseKey(hKey);
-    }
+    // ── DropTarget (DragDropHandler) ───────────────────────────
+    RegisterCLSID(CLSID_FastFileOpDropTarget, L"FastFileOp DropTarget", szModulePath);
+    RegisterShellExHandler(CLSID_FastFileOpDropTarget,
+        L"Directory\\ShellEx\\DragDropHandlers", L"FastFileOp");
+    RegisterShellExHandler(CLSID_FastFileOpDropTarget,
+        L"Folder\\ShellEx\\DragDropHandlers", L"FastFileOp");
 
     // Notify Shell
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
@@ -110,30 +195,15 @@ STDAPI DllRegisterServer()
 
 STDAPI DllUnregisterServer()
 {
-    WCHAR szKey[MAX_PATH * 2];
+    // ── CopyHook ───────────────────────────────────────────────
+    UnregisterShellExHandler(L"Directory\\ShellEx\\CopyHookHandlers", L"FastFileOp");
+    UnregisterShellExHandler(L"Folder\\ShellEx\\CopyHookHandlers", L"FastFileOp");
+    UnregisterCLSID(CLSID_FastFileOpCopyHook);
 
-    // Remove CopyHookHandlers entries
-    RegDeleteKeyW(HKEY_CLASSES_ROOT, L"Directory\\ShellEx\\CopyHookHandlers\\FastFileOp");
-    RegDeleteKeyW(HKEY_CLASSES_ROOT, L"Folder\\ShellEx\\CopyHookHandlers\\FastFileOp");
-
-    // Remove CLSID entries
-    swprintf_s(szKey, L"CLSID\\%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X\\InprocServer32",
-        CLSID_FastFileOpCopyHook.Data1, CLSID_FastFileOpCopyHook.Data2,
-        CLSID_FastFileOpCopyHook.Data3, CLSID_FastFileOpCopyHook.Data4[0],
-        CLSID_FastFileOpCopyHook.Data4[1], CLSID_FastFileOpCopyHook.Data4[2],
-        CLSID_FastFileOpCopyHook.Data4[3], CLSID_FastFileOpCopyHook.Data4[4],
-        CLSID_FastFileOpCopyHook.Data4[5], CLSID_FastFileOpCopyHook.Data4[6],
-        CLSID_FastFileOpCopyHook.Data4[7]);
-    RegDeleteKeyW(HKEY_CLASSES_ROOT, szKey);
-
-    swprintf_s(szKey, L"CLSID\\%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X",
-        CLSID_FastFileOpCopyHook.Data1, CLSID_FastFileOpCopyHook.Data2,
-        CLSID_FastFileOpCopyHook.Data3, CLSID_FastFileOpCopyHook.Data4[0],
-        CLSID_FastFileOpCopyHook.Data4[1], CLSID_FastFileOpCopyHook.Data4[2],
-        CLSID_FastFileOpCopyHook.Data4[3], CLSID_FastFileOpCopyHook.Data4[4],
-        CLSID_FastFileOpCopyHook.Data4[5], CLSID_FastFileOpCopyHook.Data4[6],
-        CLSID_FastFileOpCopyHook.Data4[7]);
-    RegDeleteKeyW(HKEY_CLASSES_ROOT, szKey);
+    // ── DropTarget ─────────────────────────────────────────────
+    UnregisterShellExHandler(L"Directory\\ShellEx\\DragDropHandlers", L"FastFileOp");
+    UnregisterShellExHandler(L"Folder\\ShellEx\\DragDropHandlers", L"FastFileOp");
+    UnregisterCLSID(CLSID_FastFileOpDropTarget);
 
     // Notify Shell
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);

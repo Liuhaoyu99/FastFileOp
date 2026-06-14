@@ -58,7 +58,7 @@ cd /d "%DLL_DIR%"
 g++.exe -shared -o "..\dist\FastFileOpShim.dll" ^
     -I. -DBUILDING_DLL -DNDEBUG -O2 ^
     -static-libgcc -static-libstdc++ ^
-    stdafx.cpp PipeClient.cpp Utils.cpp CopyHook.cpp dllmain.cpp ^
+    stdafx.cpp PipeClient.cpp Utils.cpp CopyHook.cpp DropTarget.cpp ContextMenu.cpp ExplorerCommand.cpp dllmain.cpp ^
     -lshell32 -lole32 -loleaut32 -luser32 -ladvapi32 -luuid
 
 if %errorlevel% neq 0 (
@@ -80,7 +80,7 @@ echo.
 cd /d "%DLL_DIR%"
 
 cl.exe /nologo /c /EHsc /MD /DNDEBUG /Fo"..\build\" ^
-    stdafx.cpp PipeClient.cpp Utils.cpp CopyHook.cpp dllmain.cpp
+    stdafx.cpp PipeClient.cpp Utils.cpp CopyHook.cpp DropTarget.cpp ContextMenu.cpp ExplorerCommand.cpp dllmain.cpp
 
 if %errorlevel% neq 0 (
     echo.
@@ -91,7 +91,8 @@ if %errorlevel% neq 0 (
 
 link.exe /nologo /DLL /OUT:"..\dist\FastFileOpShim.dll" ^
     "..\build\stdafx.obj" "..\build\PipeClient.obj" ^
-    "..\build\Utils.obj" "..\build\CopyHook.obj" ^
+    "..\build\Utils.obj" "..\build\CopyHook.obj" "..\build\DropTarget.obj" ^
+    "..\build\ContextMenu.obj" "..\build\ExplorerCommand.obj" ^
     "..\build\dllmain.obj" ^
     shell32.lib ole32.lib oleaut32.lib user32.lib advapi32.lib uuid.lib
 

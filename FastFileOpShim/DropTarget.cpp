@@ -1,9 +1,36 @@
-// DropTarget.cpp : IDropTarget 实现
+// DropTarget.cpp : IDropTarget + IShellExtInit 实现
 //
+// 拦截文件拖拽到 Explorer 文件夹的操作，通过 Named Pipe 发送到 Python 后端
+// 利用 IShellExtInit::Initialize() 获取目标文件夹路径
 
 #include "stdafx.h"
 #include "DropTarget.h"
 #include "PipeClient.h"
+
+// ── IShellExtInit ──────────────────────────────────────────────
+
+HRESULT STDMETHODCALLTYPE CFastFileOpDropTarget::Initialize(
+    LPCITEMIDLIST pidlFolder,
+    LPDATAOBJECT pDataObj,
+    HKEY hkeyProgID)
+{
+    // Explorer 在创建 DragDropHandler 实例时调用此方法
+    // pidlFolder 是用户拖拽文件到的目标文件夹的 PIDL
+    m_targetFolder.clear();
+
+    if (pidlFolder)
+    {
+        WCHAR szPath[MAX_PATH];
+        if (SHGetPathFromIDListW(pidlFolder, szPath))
+        {
+            m_targetFolder = szPath;
+        }
+    }
+
+    return S_OK;
+}
+
+// ── IDropTarget ────────────────────────────────────────────────
 
 HRESULT STDMETHODCALLTYPE CFastFileOpDropTarget::DragEnter(
     IDataObject* pDataObj,
@@ -30,7 +57,7 @@ HRESULT STDMETHODCALLTYPE CFastFileOpDropTarget::DragEnter(
     {
         m_canDrop = true;
 
-        // 根据 Shift/Ctrl 键状态决定效果
+        // 根据 Ctrl/Shift 键状态决定操作类型
         if (grfKeyState & MK_CONTROL)
         {
             m_dropEffect = DROPEFFECT_COPY;
@@ -41,7 +68,6 @@ HRESULT STDMETHODCALLTYPE CFastFileOpDropTarget::DragEnter(
         }
         else
         {
-            // 默认复制
             m_dropEffect = DROPEFFECT_COPY;
         }
     }
@@ -60,7 +86,6 @@ HRESULT STDMETHODCALLTYPE CFastFileOpDropTarget::DragOver(
 
     if (m_canDrop)
     {
-        // 根据 Shift/Ctrl 键状态更新效果
         if (grfKeyState & MK_CONTROL)
         {
             m_dropEffect = DROPEFFECT_COPY;
@@ -79,6 +104,7 @@ HRESULT STDMETHODCALLTYPE CFastFileOpDropTarget::DragLeave()
 {
     m_canDrop = false;
     m_dropEffect = DROPEFFECT_NONE;
+    m_targetFolder.clear();
     return S_OK;
 }
 
@@ -93,17 +119,13 @@ HRESULT STDMETHODCALLTYPE CFastFileOpDropTarget::Drop(
 
     *pdwEffect = DROPEFFECT_NONE;
 
-    if (!m_canDrop)
+    if (!m_canDrop || m_targetFolder.empty())
         return S_OK;
 
     // 获取拖拽的文件列表
     std::vector<std::wstring> files;
     if (!GetDropFiles(pDataObj, files) || files.empty())
         return S_OK;
-
-    // 获取目标文件夹路径（需要从 Shell 文件夹获取）
-    // 这里简化处理，假设目标路径由调用方提供
-    // 实际使用时需要通过 IShellFolder 接口获取
 
     // 确定操作类型
     std::wstring action;
@@ -116,13 +138,22 @@ HRESULT STDMETHODCALLTYPE CFastFileOpDropTarget::Drop(
         action = L"copy";
     }
 
-    // 注意：这里无法直接获取目标路径
-    // 需要在实际注册时配合 Shell 文件夹使用
-    // 暂时不执行实际操作，返回成功
+    // 发送到 Python 处理
+    bool success = SendToPython(action, files, m_targetFolder);
 
-    *pdwEffect = m_dropEffect;
+    if (success)
+    {
+        // 阻止系统默认拖放行为
+        *pdwEffect = m_dropEffect;
+    }
+
+    m_canDrop = false;
+    m_dropEffect = DROPEFFECT_NONE;
+
     return S_OK;
 }
+
+// ── 辅助函数 ──────────────────────────────────────────────────
 
 bool CFastFileOpDropTarget::GetDropFiles(
     IDataObject* pDataObj,
