@@ -278,48 +278,63 @@ class FastFileOpApp:
 
     def run(self):
         """Run the application"""
-        logger.info("=" * 50)
-        logger.info("FastFileOp starting...")
-        if self._silent:
-            logger.info("Mode: Silent (auto-start)")
-        logger.info("=" * 50)
+        try:
+            logger.info("=" * 50)
+            logger.info("FastFileOp starting...")
+            if self._silent:
+                logger.info("Mode: Silent (auto-start)")
+            logger.info("=" * 50)
 
-        # Check for existing instance
-        if PipeServer.is_server_running():
-            logger.error("Another instance is already running!")
-            print("Error: FastFileOp is already running.", file=sys.stderr)
-            sys.exit(1)
+            # Check for existing instance
+            if PipeServer.is_server_running():
+                logger.error("Another instance is already running!")
+                try:
+                    print("Error: FastFileOp is already running.", file=sys.stderr)
+                except Exception:
+                    pass
+                sys.exit(1)
 
-        # Ensure auto-start is registered (first run)
-        first_run = self.config_manager.ensure_auto_start_registered()
-        if first_run:
-            logger.info("Auto-start registered for first run")
+            # Ensure auto-start is registered (first run)
+            first_run = self.config_manager.ensure_auto_start_registered()
+            if first_run:
+                logger.info("Auto-start registered for first run")
 
-        # Start system tray (in background thread)
-        tray_thread = self.tray.run_threaded()
+            # Start system tray (in background thread)
+            logger.debug("Starting tray icon...")
+            tray_thread = self.tray.run_threaded()
 
-        # Show notification if first run
-        if first_run:
-            # Wait a moment for tray to be ready
-            time.sleep(0.5)
-            self.tray.show_notification(
-                "FastFileOp",
-                "FastFileOp has been set to start with Windows. You can change this in Settings."
-            )
+            # Show notification if first run
+            if first_run:
+                # Wait a moment for tray to be ready
+                time.sleep(0.5)
+                self.tray.show_notification(
+                    "FastFileOp",
+                    "FastFileOp has been set to start with Windows. You can change this in Settings."
+                )
 
-        # Start keyboard hook
-        self.hook.start()
+            # Start keyboard hook
+            logger.debug("Starting keyboard hook...")
+            self.hook.start()
 
-        # Start named pipe server
-        self.pipe_server.start()
+            # Start named pipe server
+            logger.debug("Starting pipe server...")
+            self.pipe_server.start()
 
-        # Run action processing loop
-        self._process_actions()
+            logger.info("All components started, entering main loop")
 
-        # Wait for tray thread
-        tray_thread.join(timeout=5)
+            # Run action processing loop
+            self._process_actions()
 
-        logger.info("FastFileOp exited")
+            # Wait for tray thread
+            tray_thread.join(timeout=5)
+
+            logger.info("FastFileOp exited")
+
+        except Exception as e:
+            logger.error(f"Fatal error in run(): {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
 
 
 def main():
