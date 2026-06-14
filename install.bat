@@ -83,6 +83,7 @@ if not defined SKIP_DLL (
         pause
         exit /b 1
     )
+    copy /Y "%SCRIPT_DIR%dist\libwinpthread-1.dll" "%INSTALL_DIR%\" >nul 2>nul
 )
 
 echo Files copied successfully.
@@ -94,7 +95,7 @@ echo.
 echo [Step 4/5] Registering shell extension...
 
 if not defined SKIP_DLL (
-    regsvr32 /s "%INSTALL_DIR%\FastFileOpShim.dll"
+    %WINDIR%\SysWOW64\regsvr32.exe /s "%INSTALL_DIR%\FastFileOpShim.dll"
     if %errorlevel% neq 0 (
         echo WARNING: Failed to register shell extension.
         echo The application will still work, but drag-and-drop interception may not function.
