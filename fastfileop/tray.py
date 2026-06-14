@@ -245,9 +245,12 @@ class TrayIcon:
 
     def _quit(self, icon, item):
         """Quit application"""
-        logger.info("User requested exit")
+        logger.info("User requested exit from tray menu")
+        # Stop the tray icon first - this will cause icon.run() to return
         icon.stop()
-        self.on_exit()
+        # Then call the exit callback to clean up other components
+        if self.on_exit:
+            self.on_exit()
 
     def _refresh_icon(self):
         """Refresh tray icon"""

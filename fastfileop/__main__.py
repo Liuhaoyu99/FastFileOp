@@ -153,7 +153,8 @@ class FastFileOpApp:
         self._running = False
         self.hook.stop()
         self.pipe_server.stop()
-        self.tray.stop()
+        # Note: tray.stop() is already called by the tray menu callback
+        # so we don't need to call it here
 
     def _create_engine(self) -> FileEngine:
         """Create file engine with current config"""
