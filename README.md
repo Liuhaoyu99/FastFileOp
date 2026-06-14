@@ -2,7 +2,7 @@
 
 > 🇨🇳 **中文用户请点这里**：[中文 README](README_zh.md)
 
-**Windows 复制/移动/删除加速工具，多线程引擎，比默认快 2.5-4 倍。**
+**Windows copy/move/delete accelerator with multi-threaded engine, up to 2.6x faster for multi-file operations.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -10,7 +10,7 @@
 
 ## Features
 
-- 🚀 **High-Speed File Operations** - Multi-threaded engine with 64MB buffer, achieving 318 MB/s on SSDs
+- 🚀 **High-Speed File Operations** - Multi-threaded engine with 64MB buffer, up to 2.6x faster for multi-file copy
 - ⌨️ **Keyboard Hook Integration** - Seamlessly intercepts Ctrl+C/X/V and Delete keys in Explorer
 - 🔄 **Shell Extension DLL** - C++ COM component for drag & drop interception
 - 📊 **System Tray UI** - Real-time status, pause/resume, settings GUI
@@ -64,19 +64,25 @@
 
 ## Performance Comparison
 
+![Benchmark](benchmark.png)
+
 | Metric | FastFileOp | Windows Default | Improvement |
 |--------|------------|-----------------|-------------|
-| 100MB Copy Speed | **318 MB/s** | ~80-120 MB/s | **2.5-4× faster** |
+| Multi-File Copy (500x1MB) | **1.5 GB/s** | ~598 MB/s | **2.6x faster** |
 | Buffer Size | 64 MB | 8-64 KB | Fewer syscalls |
 | Worker Threads | 4 (configurable) | 1 | Parallel I/O |
-| Large File Copy | Optimized | Standard | Significant |
+| Copy API | Windows CopyFileW | Python shutil | Native speed |
 
 ### Benchmark Results
 
 ```
-Test: 100MB file copy on NVMe SSD
-FastFileOp: 0.31s (318.4 MB/s)
-Windows Default: ~1.0-1.2s (~80-100 MB/s)
+Test: 500 files x 1MB copy on NVMe SSD (4 worker threads)
+FastFileOp:  1.5 GB/s  (multi-threaded, CopyFileW API)
+Windows:     598 MB/s  (sequential, shutil.copy2)
+Speedup:     2.6x faster
+
+Run benchmark yourself:
+  python benchmark.py
 ```
 
 ## Installation

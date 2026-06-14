@@ -4,6 +4,7 @@ Multi-threaded file copy/move/delete with progress callback,
 pause/resume/cancel support, and error handling.
 """
 
+import ctypes
 import logging
 import os
 import shutil
@@ -16,6 +17,11 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Windows CopyFileW API - fastest single-file copy on Windows
+_kernel32 = ctypes.windll.kernel32
+_kernel32.CopyFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_int]
+_kernel32.CopyFileW.restype = ctypes.c_int
 
 
 class OpState(Enum):
@@ -124,45 +130,28 @@ class FileEngine:
         return not self._cancel_event.is_set()
 
     def _copy_single_file(self, src: str, dst: str, file_index: int) -> FileProgress:
-        """Copy a single file with chunked read/write for large files"""
+        """Copy a single file using Windows CopyFileW API for maximum speed"""
         fp = FileProgress(src=src, dst=dst)
 
         try:
+            if not self._check_pause_cancel():
+                return fp
+
             src_size = os.path.getsize(src)
             fp.total_bytes = src_size
 
-            # Small files: direct copy
-            if src_size < self.buffer_size:
-                if not self._check_pause_cancel():
-                    return fp
+            # Use Windows CopyFileW API - single kernel call, much faster
+            # than Python's read/write loop or shutil.copyfile
+            result = _kernel32.CopyFileW(src, dst, 0)
+            if not result:
+                # Fallback to shutil if CopyFileW fails
                 shutil.copyfile(src, dst)
-                fp.copied_bytes = src_size
-                with self._lock:
-                    self._progress.copied_bytes += src_size
-                fp.done = True
-                self._notify_progress(src)
-                return fp
 
-            # Large files: chunked copy
-            with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
-                while True:
-                    if not self._check_pause_cancel():
-                        return fp
-
-                    chunk = fsrc.read(self.buffer_size)
-                    if not chunk:
-                        break
-
-                    fdst.write(chunk)
-                    n = len(chunk)
-                    fp.copied_bytes += n
-
-                    with self._lock:
-                        self._progress.copied_bytes += n
-
-                    self._notify_progress(src)
-
+            fp.copied_bytes = src_size
+            with self._lock:
+                self._progress.copied_bytes += src_size
             fp.done = True
+            self._notify_progress(src)
 
         except Exception as e:
             fp.error = str(e)
@@ -173,7 +162,6 @@ class FileEngine:
         finally:
             with self._lock:
                 self._progress.completed_files += 1
-            self._notify_progress(src)
 
         return fp
 
@@ -269,6 +257,11 @@ class FileEngine:
     def copy(self, src_list: List[str], dst_dir: str) -> OperationProgress:
         """Copy files/directories to destination
 
+        Uses batched task assignment: files are divided into N batches
+        (one per worker), each worker processes its batch sequentially.
+        This minimizes ThreadPoolExecutor overhead compared to submitting
+        each file as a separate task.
+
         Args:
             src_list: Source paths (files or directories)
             dst_dir: Destination directory
@@ -303,23 +296,44 @@ class FileEngine:
 
         self._notify_progress()
 
-        # Execute with thread pool
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {}
-            for src, dst, idx in tasks:
+        # Split tasks into batches - one batch per worker
+        # This reduces ThreadPoolExecutor overhead from O(n) to O(workers)
+        num_workers = min(self.max_workers, len(tasks))
+        if num_workers <= 0:
+            self._finalize_state()
+            return self._progress
+
+        batches = [[] for _ in range(num_workers)]
+        for idx, task in enumerate(tasks):
+            batches[idx % num_workers].append(task)
+
+        def process_batch(batch):
+            """Process a batch of copy tasks sequentially within one thread."""
+            results = []
+            for src, dst, i in batch:
+                if self._cancel_event.is_set():
+                    break
                 if os.path.isdir(src):
-                    future = executor.submit(self._copy_directory, src, dst, idx)
+                    fp = self._copy_directory(src, dst, i)
                 else:
-                    future = executor.submit(self._copy_single_file, src, dst, idx)
-                futures[future] = (src, dst)
+                    fp = self._copy_single_file(src, dst, i)
+                results.append(fp)
+            return results
+
+        # Execute with thread pool - one future per batch
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            futures = [executor.submit(process_batch, batch) for batch in batches if batch]
 
             for future in as_completed(futures):
                 if self._cancel_event.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
                     break
 
-                fp = future.result()
-                self._progress.file_progresses.append(fp)
+                try:
+                    batch_results = future.result()
+                    self._progress.file_progresses.extend(batch_results)
+                except Exception as e:
+                    logger.error(f"Batch failed: {e}")
 
         self._finalize_state()
         return self._progress

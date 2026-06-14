@@ -98,39 +98,65 @@ class ConfigManager:
                 setattr(self._config, key, value)
         self.save()
 
+    def _get_startup_folder_path(self) -> str:
+        """Get Windows startup folder path"""
+        return os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "Microsoft", "Windows", "Start Menu", "Programs", "Startup"
+        )
+
+    def _get_shortcut_path(self) -> str:
+        """Get path to the startup shortcut"""
+        startup_dir = self._get_startup_folder_path()
+        return os.path.join(startup_dir, "FastFileOp.lnk")
+
     def set_auto_start(self, enable: bool) -> None:
-        """Set auto-start on boot
+        """Set auto-start on boot using Windows Startup folder
 
-        Writes to HKCU\Software\Microsoft\Windows\CurrentVersion\Run
+        Creates/deletes a .lnk shortcut in the user's Startup folder.
+        More reliable than registry and easier for users to manage.
         """
-        import winreg
+        from win32com.client import Dispatch
 
-        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        app_name = "FastFileOp"
+        shortcut_path = self._get_shortcut_path()
 
         # Get current exe path with --silent flag for auto-start
         if getattr(sys, "frozen", False):
             exe_path = sys.executable
+            target = exe_path
+            arguments = "--silent"
         else:
-            exe_path = os.path.abspath(sys.argv[0])
-
-        # Add --silent flag for auto-start
-        exe_path_with_args = f'"{exe_path}" --silent'
+            # Running as script - use the script path
+            script_path = os.path.join(os.path.dirname(__file__), "__main__.py")
+            exe_path = sys.executable
+            # For scripts, we need to use python.exe with the script as argument
+            target = exe_path
+            arguments = f'"{script_path}" --silent'
 
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
-
             if enable:
-                winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path_with_args)
-                logger.info(f"Auto-start enabled: {exe_path_with_args}")
-            else:
-                try:
-                    winreg.DeleteValue(key, app_name)
-                    logger.info("Auto-start disabled")
-                except FileNotFoundError:
-                    pass
+                # Ensure startup folder exists
+                startup_dir = self._get_startup_folder_path()
+                os.makedirs(startup_dir, exist_ok=True)
 
-            winreg.CloseKey(key)
+                # Create shortcut using Windows Script Host
+                shell = Dispatch("WScript.Shell")
+                shortcut = shell.CreateShortCut(shortcut_path)
+                shortcut.TargetPath = target
+                shortcut.Arguments = arguments
+                shortcut.WorkingDirectory = os.path.dirname(target)
+                shortcut.Description = "FastFileOp - High-Speed File Operations"
+                # Try to set icon to the exe itself
+                shortcut.IconLocation = f"{target},0"
+                shortcut.save()
+
+                logger.info(f"Auto-start enabled: {shortcut_path}")
+            else:
+                # Remove shortcut if exists
+                if os.path.exists(shortcut_path):
+                    os.remove(shortcut_path)
+                    logger.info("Auto-start disabled")
+
             self._config.auto_start = enable
             self.save()
 
@@ -138,26 +164,12 @@ class ConfigManager:
             logger.error(f"Failed to set auto-start: {e}")
 
     def is_auto_start_registered(self) -> bool:
-        """Check if auto-start is registered in Windows registry
+        """Check if auto-start shortcut exists in Startup folder
 
         Returns:
-            True if the registry key exists
+            True if the shortcut exists
         """
-        import winreg
-
-        key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-        app_name = "FastFileOp"
-
-        try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
-            winreg.QueryValueEx(key, app_name)
-            winreg.CloseKey(key)
-            return True
-        except (FileNotFoundError, WindowsError):
-            return False
-        except Exception as e:
-            logger.error(f"Failed to check auto-start registry: {e}")
-            return False
+        return os.path.exists(self._get_shortcut_path())
 
     def ensure_auto_start_registered(self) -> bool:
         """Ensure auto-start is registered (for first-run)

@@ -1,0 +1,7 @@
+; FastFileOpShim.def - Export definitions for FastFileOpShim.dll
+LIBRARY FastFileOpShim
+EXPORTS
+    DllRegisterServer
+    DllUnregisterServer
+    DllGetClassObject
+    DllCanUnloadNow

@@ -2,7 +2,7 @@
 
 > 🇺🇸 **English users click here**: [English README](README.md)
 
-**Windows 复制/移动/删除加速工具，多线程引擎，比默认快 2.5-4 倍。**
+**Windows 复制/移动/删除加速工具，多线程引擎，多文件复制比默认快 2.6 倍。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -10,7 +10,7 @@
 
 ## 功能特性
 
-- 🚀 **高速文件操作** - 多线程引擎配合 64MB 缓冲区，SSD 上可达 318 MB/s
+- 🚀 **高速文件操作** - 多线程引擎配合 64MB 缓冲区，多文件复制可达 2.6 倍加速
 - ⌨️ **键盘钩子集成** - 无缝拦截资源管理器中的 Ctrl+C/X/V 和 Delete 键
 - 🔄 **Shell 扩展 DLL** - C++ COM 组件，用于拦截拖放操作
 - 📊 **系统托盘界面** - 实时状态、暂停/恢复、设置 GUI
@@ -64,19 +64,25 @@
 
 ## 性能对比
 
+![基准测试](benchmark.png)
+
 | 指标 | FastFileOp | Windows 默认 | 提升 |
 |------|------------|-------------|------|
-| 100MB 复制速度 | **318 MB/s** | ~80-120 MB/s | **2.5-4 倍** |
+| 多文件复制 (500x1MB) | **1.5 GB/s** | ~598 MB/s | **2.6 倍** |
 | 缓冲区大小 | 64 MB | 8-64 KB | 减少系统调用 |
 | 工作线程数 | 4 (可配置) | 1 | 并行 I/O |
-| 大文件复制 | 优化 | 标准 | 显著提升 |
+| 复制 API | Windows CopyFileW | Python shutil | 原生速度 |
 
 ### 基准测试结果
 
 ```
-测试: NVMe SSD 上复制 100MB 文件
-FastFileOp: 0.31s (318.4 MB/s)
-Windows 默认: ~1.0-1.2s (~80-100 MB/s)
+测试: NVMe SSD 上复制 500 个 1MB 文件 (4 工作线程)
+FastFileOp:  1.5 GB/s  (多线程, CopyFileW API)
+Windows:     598 MB/s  (顺序, shutil.copy2)
+加速比:      2.6 倍
+
+自行运行基准测试:
+  python benchmark.py
 ```
 
 ## 安装
