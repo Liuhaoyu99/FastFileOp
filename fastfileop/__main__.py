@@ -14,6 +14,7 @@ import queue
 import sys
 import threading
 import time
+from pathlib import Path
 
 from .clipboard import ClipboardMonitor
 from .config import ConfigManager
@@ -21,6 +22,7 @@ from .engine import FileEngine, OpState
 from .hook import KeyboardHook
 from .logger import configure_root_logger, set_debug_mode
 from .pipe_server import PipeServer
+from .progress import ProgressWindow, ProgressCallback
 from .shell import ShellHelper
 from .settings import SettingsWindow
 from .tray import TrayIcon
@@ -188,9 +190,34 @@ class FastFileOpApp:
             KeyboardHook.send_paste()
             return
 
+        # Calculate total size for progress
+        total_bytes = 0
+        for f in files:
+            try:
+                p = Path(f)
+                if p.is_file():
+                    total_bytes += p.stat().st_size
+                elif p.is_dir():
+                    total_bytes += sum(x.stat().st_size for x in p.rglob("*") if x.is_file())
+            except Exception:
+                pass
+
+        # Create progress window
+        operation = "Moving" if is_cut else "Copying"
+        progress_win = ProgressWindow(
+            title="FastFileOp",
+            operation=operation,
+            total_files=len(files),
+            total_bytes=total_bytes,
+            on_pause=self._on_progress_pause,
+            on_cancel=self._on_progress_cancel,
+        )
+        progress_win.show()
+
         # Execute operation
         with self._engine_lock:
             self.engine = self._create_engine()
+            self.engine.progress_callback = ProgressCallback(progress_win)
 
         def _run():
             try:
@@ -206,8 +233,18 @@ class FastFileOpApp:
                     logger.warning(f"Operation completed with {len(failed)} failures")
                     for fp in failed:
                         logger.warning(f"  Failed: {fp.src} - {fp.error}")
+                    progress_win.set_complete(False, f"{len(failed)} files failed")
+                else:
+                    progress_win.set_complete(True)
+
+                # Auto-close after 2 seconds on success
+                if not failed:
+                    time.sleep(1.5)
+                    progress_win.close()
+
             except Exception as e:
                 logger.error(f"File operation error: {e}")
+                progress_win.set_complete(False, str(e))
             finally:
                 with self._engine_lock:
                     self.engine = None
@@ -235,8 +272,21 @@ class FastFileOpApp:
 
         permanent = shift_pressed
 
+        # Create progress window
+        operation = "Deleting permanently" if permanent else "Moving to Recycle Bin"
+        progress_win = ProgressWindow(
+            title="FastFileOp",
+            operation=operation,
+            total_files=len(files),
+            total_bytes=0,  # Delete doesn't track bytes
+            on_pause=self._on_progress_pause,
+            on_cancel=self._on_progress_cancel,
+        )
+        progress_win.show()
+
         with self._engine_lock:
             self.engine = self._create_engine()
+            self.engine.progress_callback = ProgressCallback(progress_win)
 
         def _run():
             try:
@@ -249,14 +299,39 @@ class FastFileOpApp:
                     logger.warning(f"Delete completed with {len(failed)} failures")
                     for fp in failed:
                         logger.warning(f"  Failed: {fp.src} - {fp.error}")
+                    progress_win.set_complete(False, f"{len(failed)} files failed")
+                else:
+                    progress_win.set_complete(True)
+
+                # Auto-close after 1.5 seconds on success
+                if not failed:
+                    time.sleep(1)
+                    progress_win.close()
+
             except Exception as e:
                 logger.error(f"Delete operation error: {e}")
+                progress_win.set_complete(False, str(e))
             finally:
                 with self._engine_lock:
                     self.engine = None
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
+
+    def _on_progress_pause(self, paused: bool):
+        """Handle pause/resume from progress window"""
+        with self._engine_lock:
+            if self.engine:
+                if paused:
+                    self.engine.pause()
+                else:
+                    self.engine.resume()
+
+    def _on_progress_cancel(self):
+        """Handle cancel from progress window"""
+        with self._engine_lock:
+            if self.engine:
+                self.engine.cancel()
 
     def _process_actions(self):
         """Main action processing loop"""
