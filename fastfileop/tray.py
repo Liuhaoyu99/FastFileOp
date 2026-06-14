@@ -213,35 +213,44 @@ class TrayIcon:
         """Register shell extension DLL"""
         logger.info("User requested DLL registration from tray menu")
 
-        # Show confirmation dialog
-        msg = (
-            "To register the shell extension, FastFileOp needs to run with administrator privileges.\n\n"
-            "Click OK to restart as administrator and register the DLL."
-        )
+        # Use tkinter for the dialog (works better in callback threads)
+        import tkinter as tk
+        from tkinter import messagebox
 
-        result = ctypes.windll.user32.MessageBoxW(
-            0,
-            msg,
-            "FastFileOp - Register Shell Extension",
-            0x40 | 0x01  # MB_ICONINFORMATION | MB_OKCANCEL
-        )
+        def show_dialog():
+            root = tk.Tk()
+            root.withdraw()  # Hide the main window
+            root.attributes('-topmost', True)  # Bring to front
 
-        if result == 1:  # IDOK
-            # Import here to avoid circular import
-            from .register import run_as_admin
-            if run_as_admin(["--register-dll"]):
-                logger.info("Admin elevation requested for DLL registration")
-                # Show notification
-                self.show_notification(
-                    "FastFileOp",
-                    "Restarting with administrator privileges to register DLL..."
-                )
-            else:
-                logger.error("Failed to request admin elevation")
-                self.show_notification(
-                    "FastFileOp - Error",
-                    "Failed to request administrator privileges."
-                )
+            result = messagebox.askokcancel(
+                "FastFileOp - Register Shell Extension",
+                "To register the shell extension, FastFileOp needs to run with administrator privileges.\n\n"
+                "Click OK to restart as administrator and register the DLL."
+            )
+
+            root.destroy()
+
+            if result:
+                # Import here to avoid circular import
+                from .register import run_as_admin
+                if run_as_admin(["--register-dll"]):
+                    logger.info("Admin elevation requested for DLL registration")
+                    # Show notification
+                    self.show_notification(
+                        "FastFileOp",
+                        "Restarting with administrator privileges to register DLL..."
+                    )
+                else:
+                    logger.error("Failed to request admin elevation")
+                    self.show_notification(
+                        "FastFileOp - Error",
+                        "Failed to request administrator privileges."
+                    )
+
+        # Run dialog in a separate thread to avoid blocking
+        import threading
+        thread = threading.Thread(target=show_dialog, daemon=True)
+        thread.start()
 
     def _quit(self, icon, item):
         """Quit application"""
