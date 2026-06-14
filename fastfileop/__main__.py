@@ -152,7 +152,7 @@ class FastFileOpApp:
         logger.info("Shutting down FastFileOp...")
         self._running = False
 
-        # Stop components
+        # Stop components (best effort)
         try:
             self.hook.stop()
         except Exception as e:
@@ -163,9 +163,11 @@ class FastFileOpApp:
         except Exception as e:
             logger.error(f"Error stopping pipe server: {e}")
 
-        # Force exit after cleanup
-        import os
-        os._exit(0)
+        # Force kill the process using Windows API
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        logger.info("Force terminating process...")
+        kernel32.ExitProcess(0)
 
     def _create_engine(self) -> FileEngine:
         """Create file engine with current config"""

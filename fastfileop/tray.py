@@ -254,21 +254,29 @@ class TrayIcon:
 
     def _quit(self, icon, item):
         """Quit application"""
-        logger.info("User requested exit from tray menu")
+        logger.info("=== EXIT: User clicked Exit in tray menu ===")
 
         # Schedule cleanup in a separate thread to avoid blocking
         def do_exit():
+            logger.info("=== EXIT: Starting exit sequence ===")
             import time
             time.sleep(0.1)  # Small delay to let menu close
+
             if self.on_exit:
+                logger.info("=== EXIT: Calling on_exit callback ===")
                 self.on_exit()
+
             # Stop the tray icon - this will cause icon.run() to return
             if self._icon:
+                logger.info("=== EXIT: Stopping tray icon ===")
                 self._icon.stop()
+
+            logger.info("=== EXIT: Exit sequence complete ===")
 
         import threading
         exit_thread = threading.Thread(target=do_exit, daemon=True)
         exit_thread.start()
+        logger.info("=== EXIT: Exit thread started ===")
 
     def _refresh_icon(self):
         """Refresh tray icon"""
