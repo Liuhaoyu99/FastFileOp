@@ -44,13 +44,13 @@ class SettingsWindow:
 
         self._window = tk.Tk()
         self._window.title("FastFileOp Settings")
-        self._window.geometry("480x420")
+        self._window.geometry("480x500")
         self._window.resizable(False, False)
 
         # Center window
         self._window.update_idletasks()
         x = (self._window.winfo_screenwidth() - 480) // 2
-        y = (self._window.winfo_screenheight() - 420) // 2
+        y = (self._window.winfo_screenheight() - 500) // 2
         self._window.geometry(f"+{x}+{y}")
 
         main_frame = ttk.Frame(self._window, padding=20)

@@ -299,19 +299,6 @@ class FastFileOpApp:
             if first_run:
                 logger.info("Auto-start registered for first run")
 
-            # Start system tray (in background thread)
-            logger.debug("Starting tray icon...")
-            tray_thread = self.tray.run_threaded()
-
-            # Show notification if first run
-            if first_run:
-                # Wait a moment for tray to be ready
-                time.sleep(0.5)
-                self.tray.show_notification(
-                    "FastFileOp",
-                    "FastFileOp has been set to start with Windows. You can change this in Settings."
-                )
-
             # Start keyboard hook
             logger.debug("Starting keyboard hook...")
             self.hook.start()
@@ -320,13 +307,33 @@ class FastFileOpApp:
             logger.debug("Starting pipe server...")
             self.pipe_server.start()
 
-            logger.info("All components started, entering main loop")
+            # Start action processing in background thread
+            logger.debug("Starting action processor thread...")
+            action_thread = threading.Thread(
+                target=self._process_actions,
+                daemon=True,
+            )
+            action_thread.start()
 
-            # Run action processing loop
-            self._process_actions()
+            logger.info("All components started, running tray on main thread")
 
-            # Wait for tray thread
-            tray_thread.join(timeout=5)
+            # Show notification if first run (will be shown after tray starts)
+            if first_run:
+                def show_first_run_notification(icon):
+                    time.sleep(1)
+                    icon.notify(
+                        "FastFileOp has been set to start with Windows. You can change this in Settings.",
+                        "FastFileOp"
+                    )
+                threading.Thread(target=show_first_run_notification, args=(self.tray._icon,), daemon=True).start()
+
+            # Run tray icon on MAIN THREAD (required for Windows)
+            # This blocks until tray.stop() is called
+            self.tray.run()
+
+            # Wait for action thread
+            self._running = False
+            action_thread.join(timeout=2)
 
             logger.info("FastFileOp exited")
 

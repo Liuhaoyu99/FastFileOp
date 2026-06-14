@@ -239,13 +239,8 @@ class PipeServer:
             instance_id: Instance identifier for logging
         """
         try:
-            # Read request
-            data = b""
-            while True:
-                chunk, more = win32file.ReadFile(pipe_handle, BUFFER_SIZE)
-                data += chunk
-                if not more:
-                    break
+            # Read request - win32file.ReadFile returns (error_code, data) for message mode
+            error_code, data = win32file.ReadFile(pipe_handle, BUFFER_SIZE)
 
             request = data.decode("utf-8").strip()
             if not request:

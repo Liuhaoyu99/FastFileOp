@@ -1,79 +1,61 @@
 """FastFileOp - System Tray Module
 
 Creates system tray icon with right-click menu using pystray.
-Icon is embedded as base64 to avoid external file dependency.
+Icon is generated programmatically to avoid external file dependency.
 Supports instability status and manual resume.
 """
 
-import base64
-import io
 import logging
 import threading
 from typing import Callable, Optional
 
 import pystray
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
-# Embedded icon (64x64 PNG, blue background with white "F")
-ICON_DATA = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAACXBIWXMAAAsTAAALEwEAmpwYAAAB"
-    "hklEQVR4nO2YsU7DMBCGP0QHqKVD6CB1kjqIDlKHqSNUo6qigqKKKgo2qGjRpeYA8Cf2JXuYxJfU"
-    "NE0yxN/8fz8+M5KZkRCi/4gBkAAWwDpgB+wBu4AcsAtoAQeAN+AXsA9YASeAAXAOuAN2gCVwDLgD"
-    "doEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2"
-    "gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aB"
-    "HXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEd"
-    "cAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1w"
-    "DLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAM"
-    "uAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4"
-    "A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD"
-    "9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2"
-    "gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aB"
-    "HXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEd"
-    "cAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1w"
-    "DLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAM"
-    "uAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4"
-    "A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD9oEdcAy4A/aBHXAMuAP2gR1wDLgD"
-    "9oEdcAy4A/aBHXAM+BeGBQ4wEj3R2QAAAABJRU5ErkJggg=="
-)
-
 
 def _create_icon_image(size: int = 64, color: tuple = (41, 128, 185)) -> Image.Image:
-    """Create tray icon image"""
-    try:
-        img = Image.open(io.BytesIO(ICON_DATA))
-        if img.size != (size, size):
-            img = img.resize((size, size), Image.Resampling.LANCZOS)
-        # Convert to RGBA if needed
-        if img.mode != 'RGBA':
-            img = img.convert('RGBA')
-        return img
-    except Exception as e:
-        logger.warning(f"Failed to load embedded icon: {e}")
+    """Create tray icon image programmatically
 
-    # Fallback: create simple colored icon
+    Creates a rounded square with "F" letter.
+    """
+    # Create RGBA image with transparency
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Draw rounded rectangle background
+    margin = 4
+    draw.rounded_rectangle(
+        [(margin, margin), (size - margin, size - margin)],
+        radius=12,
+        fill=color + (255,),  # Add alpha channel
+    )
+
+    # Draw "F" letter
     try:
-        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        from PIL import ImageDraw
-        draw = ImageDraw.Draw(img)
-        margin = 4
-        draw.rounded_rectangle(
-            [(margin, margin), (size - margin, size - margin)],
-            radius=12,
-            fill=color,
-        )
+        font = ImageFont.truetype("arial.ttf", size // 2)
+    except Exception:
         try:
-            from PIL import ImageFont
-            font = ImageFont.truetype("arial.ttf", size // 2)
-        except Exception:
             font = ImageFont.load_default()
-        draw.text((size // 3, size // 6), "F", fill=(255, 255, 255), font=font)
-        return img
-    except Exception as e:
-        logger.error(f"Failed to create fallback icon: {e}")
-        # Last resort: return a simple colored square
-        return Image.new("RGBA", (size, size), color + (255,))
+        except Exception:
+            font = None
+
+    # Center the text
+    text = "F"
+    if font:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+    else:
+        text_width = size // 3
+        text_height = size // 2
+
+    x = (size - text_width) // 2
+    y = (size - text_height) // 2 - 2
+    draw.text((x, y), text, fill=(255, 255, 255, 255), font=font)
+
+    return img
 
 
 def _create_paused_image(size: int = 64) -> Image.Image:
@@ -234,6 +216,11 @@ class TrayIcon:
 
             logger.debug(f"Creating tray icon with image size: {image.size}")
 
+            def setup(icon):
+                """Setup callback - make icon visible"""
+                icon.visible = True
+                logger.info("Tray icon made visible")
+
             self._icon = pystray.Icon(
                 name="FastFileOp",
                 icon=image,
@@ -241,10 +228,15 @@ class TrayIcon:
                 menu=self._get_menu(),
             )
 
-            logger.info("System tray icon created successfully")
-            self._icon.run()
+            logger.info("System tray icon created successfully, starting run loop")
+
+            # Run the icon with setup callback - this blocks until icon.stop() is called
+            self._icon.run(setup=setup)
+
         except Exception as e:
             logger.error(f"Failed to create/run tray icon: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             raise
 
     def run_threaded(self) -> threading.Thread:

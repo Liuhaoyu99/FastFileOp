@@ -1,30 +1,58 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-*.egg-info/
-dist/
+.Python
 build/
-*.egg
+develop-eggs/
+dist/
+downloads/
+eggs/
 .eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
 *.spec
 
-# 虚拟环境
-venv/
-.venv/
-env/
+# Logs
+*.log
+logs/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# 系统文件
-Thumbs.db
-Desktop.ini
+# C/C++ build artifacts
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+
+# Config files (user-specific)
+config.json
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS files
 .DS_Store
+Thumbs.db
 
-# 打包输出
-output/
-*.exe
+# Keep important files
+!requirements.txt
