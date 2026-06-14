@@ -1,0 +1,46 @@
+// DropTarget.rgs : DropTarget 注册脚本
+//
+
+HKCR
+{
+    NoRemove Directory
+    {
+        NoRemove ShellEx
+        {
+            NoRemove DragDropHandlers
+            {
+                ForceRemove FastFileOp
+                {
+                    val '' = s '{C3D4E5F6-A7B8-9012-CDEF-123456789012}'
+                }
+            }
+        }
+    }
+
+    NoRemove Folder
+    {
+        NoRemove ShellEx
+        {
+            NoRemove DragDropHandlers
+            {
+                ForceRemove FastFileOp
+                {
+                    val '' = s '{C3D4E5F6-A7B8-9012-CDEF-123456789012}'
+                }
+            }
+        }
+    }
+
+    NoRemove CLSID
+    {
+        ForceRemove {C3D4E5F6-A7B8-9012-CDEF-123456789012}
+        {
+            val AppID = s '{E1F2A3B4-C5D6-7890-ABCD-EF1234567890}'
+            val 'ThreadingModel' = s 'Apartment'
+            InprocServer32 = s '%MODULE%'
+            {
+                val ThreadingModel = s 'Apartment'
+            }
+        }
+    }
+}

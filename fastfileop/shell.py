@@ -1,60 +1,60 @@
-"""FastFileOp - Shell COM 集成模块
+"""FastFileOp - Shell COM Integration Module
 
-通过 Shell.Application COM 接口获取资源管理器中
-当前选中的文件列表。
+Uses Shell.Application COM interface to:
+- Get selected files in Explorer
+- Get current directory in Explorer
 """
 
+import logging
 import os
 from typing import List, Optional
 
 import pythoncom
 from win32com.client import Dispatch
 
-from .logger import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class ShellHelper:
-    """Shell COM 辅助类
+    """Shell COM helper
 
-    通过 Shell.Application COM 接口：
-    - 获取资源管理器当前选中的文件列表
-    - 获取资源管理器当前目录路径
+    Provides access to Explorer selection and current directory
+    via Shell.Application COM interface.
     """
 
     def __init__(self):
         self._shell = None
 
     def _get_shell(self):
-        """获取 Shell.Application COM 对象"""
+        """Get Shell.Application COM object"""
         if self._shell is None:
             pythoncom.CoInitialize()
             self._shell = Dispatch("Shell.Application")
         return self._shell
 
     def get_selected_files(self, hwnd: int = 0) -> List[str]:
-        """获取资源管理器中当前选中的文件路径列表
+        """Get selected files in Explorer
 
         Args:
-            hwnd: 资源管理器窗口句柄，0 表示当前活动窗口
+            hwnd: Explorer window handle, 0 for active window
 
         Returns:
-            选中的文件完整路径列表
+            List of selected file paths
         """
         files = []
+
         try:
             shell = self._get_shell()
             windows = shell.Windows()
             target_window = None
 
             if hwnd == 0:
-                # 获取最后一个资源管理器窗口
+                # Get last Explorer window
                 count = windows.Count
                 if count > 0:
                     target_window = windows.Item(count - 1)
             else:
-                # 根据 hwnd 查找
+                # Find by hwnd
                 for i in range(windows.Count):
                     win = windows.Item(i)
                     try:
@@ -65,10 +65,10 @@ class ShellHelper:
                         continue
 
             if target_window is None:
-                logger.debug("未找到资源管理器窗口")
+                logger.debug("Explorer window not found")
                 return files
 
-            # 获取选中项
+            # Get selected items
             selected_items = target_window.Document.SelectedItems()
             for i in range(selected_items.Count):
                 item = selected_items.Item(i)
@@ -77,18 +77,18 @@ class ShellHelper:
                     files.append(path)
 
         except Exception as e:
-            logger.error(f"获取选中文件失败: {e}")
+            logger.error(f"Failed to get selected files: {e}")
 
         return files
 
     def get_current_directory(self, hwnd: int = 0) -> Optional[str]:
-        """获取资源管理器当前目录路径
+        """Get current directory in Explorer
 
         Args:
-            hwnd: 资源管理器窗口句柄
+            hwnd: Explorer window handle
 
         Returns:
-            当前目录路径，失败返回 None
+            Current directory path or None
         """
         try:
             shell = self._get_shell()
@@ -115,21 +115,25 @@ class ShellHelper:
             return target_window.Document.Folder.Self.Path
 
         except Exception as e:
-            logger.error(f"获取当前目录失败: {e}")
+            logger.error(f"Failed to get current directory: {e}")
             return None
 
-    def get_explorer_hwnd(self) -> List[int]:
-        """获取所有资源管理器窗口的句柄列表"""
+    def get_explorer_hwnds(self) -> List[int]:
+        """Get all Explorer window handles"""
         hwnds = []
+
         try:
             shell = self._get_shell()
             windows = shell.Windows()
+
             for i in range(windows.Count):
                 win = windows.Item(i)
                 try:
                     hwnds.append(win.HWND)
                 except Exception:
                     continue
+
         except Exception as e:
-            logger.error(f"获取资源管理器窗口列表失败: {e}")
+            logger.error(f"Failed to get Explorer windows: {e}")
+
         return hwnds

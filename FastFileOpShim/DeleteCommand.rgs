@@ -1,0 +1,46 @@
+// DeleteCommand.rgs : DeleteCommand 注册脚本
+//
+
+HKCR
+{
+    NoRemove *
+    {
+        NoRemove ShellEx
+        {
+            NoRemove ContextMenuHandlers
+            {
+                ForceRemove FastFileOpDelete
+                {
+                    val '' = s '{D4E5F6A7-B8C9-0123-DEF0-234567890123}'
+                }
+            }
+        }
+    }
+
+    NoRemove Directory
+    {
+        NoRemove ShellEx
+        {
+            NoRemove ContextMenuHandlers
+            {
+                ForceRemove FastFileOpDelete
+                {
+                    val '' = s '{D4E5F6A7-B8C9-0123-DEF0-234567890123}'
+                }
+            }
+        }
+    }
+
+    NoRemove CLSID
+    {
+        ForceRemove {D4E5F6A7-B8C9-0123-DEF0-234567890123}
+        {
+            val AppID = s '{E1F2A3B4-C5D6-7890-ABCD-EF1234567890}'
+            val 'ThreadingModel' = s 'Apartment'
+            InprocServer32 = s '%MODULE%'
+            {
+                val ThreadingModel = s 'Apartment'
+            }
+        }
+    }
+}

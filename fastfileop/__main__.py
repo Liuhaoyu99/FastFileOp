@@ -1,8 +1,15 @@
-"""FastFileOp - 主入口模块
+"""FastFileOp - Main Entry Module
 
-启动系统托盘、键盘钩子和操作处理循环。
+Coordinates all components:
+1. System tray icon
+2. Global keyboard hook
+3. Named pipe server
+4. File operation engine
+5. Watchdog for instability detection
 """
 
+import argparse
+import logging
 import queue
 import sys
 import threading
@@ -12,55 +19,114 @@ from .clipboard import ClipboardMonitor
 from .config import ConfigManager
 from .engine import FileEngine, OpState
 from .hook import KeyboardHook
-from .logger import get_logger
+from .logger import configure_root_logger, set_debug_mode
+from .pipe_server import PipeServer
 from .shell import ShellHelper
+from .settings import SettingsWindow
 from .tray import TrayIcon
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
+
+
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="FastFileOp - High-Speed File Operations")
+    parser.add_argument(
+        "--silent",
+        action="store_true",
+        help="Silent mode - start minimized to tray (for auto-start)",
+    )
+    return parser.parse_args()
 
 
 class FastFileOpApp:
-    """FastFileOp 主应用
+    """FastFileOp main application
 
-    协调各模块工作：
-    1. 系统托盘图标
-    2. 全局键盘钩子
-    3. 剪贴板监控
-    4. 文件操作引擎
+    Coordinates:
+    - System tray icon
+    - Global keyboard hook (Ctrl+V, Delete)
+    - Named pipe server (DLL communication)
+    - File operation engine
+    - Watchdog for instability detection
     """
 
-    def __init__(self):
+    def __init__(self, silent: bool = False):
+        self._silent = silent
+
+        # Initialize configuration
         self.config_manager = ConfigManager()
         self.config_manager.load()
 
+        # Configure logging
+        configure_root_logger(self.config_manager.config.debug_mode)
+
+        # Components
         self.action_queue: queue.Queue = queue.Queue()
         self.clipboard = ClipboardMonitor()
         self.shell = ShellHelper()
-        self.engine: FileEngine = None  # 当前正在执行的引擎
+        self.engine: FileEngine = None
         self._engine_lock = threading.Lock()
         self._running = True
+        self._instability_detected = False
 
-        # 键盘钩子
+        # Keyboard hook
         self.hook = KeyboardHook(
             action_queue=self.action_queue,
-            is_intercepting=self._is_intercepting,
+            is_hooking_enabled=self._is_hooking_enabled,
         )
 
-        # 系统托盘
+        # System tray
         self.tray = TrayIcon(
             config_manager=self.config_manager,
             on_settings=self._open_settings,
             on_exit=self._quit,
+            on_toggle_pause=self._on_pause_toggle,
+            on_resume_interception=self._on_resume_interception,
         )
 
-    def _is_intercepting(self) -> bool:
-        """判断当前是否应该拦截键盘操作"""
-        return self.config_manager.is_intercepting()
+        # Named pipe server with watchdog
+        self.pipe_server = PipeServer(
+            engine_factory=self._create_engine,
+            on_instability=self._on_instability_detected,
+        )
+
+    def _is_hooking_enabled(self) -> bool:
+        """Check if hooking is enabled"""
+        # Also check for instability
+        if self._instability_detected:
+            return False
+        return self.config_manager.is_hooking_enabled()
+
+    def _on_pause_toggle(self, paused: bool):
+        """Handle pause toggle from tray"""
+        logger.info(f"Interception {'paused' if paused else 'resumed'}")
+
+    def _on_resume_interception(self):
+        """Handle manual resume from instability"""
+        logger.info("Manual resume from instability")
+        self._instability_detected = False
+        self.config_manager.update(paused=False)
+        self.pipe_server.reset_watchdog()
+        self.tray.update_instability_status(False)
+
+    def _on_instability_detected(self):
+        """Handle instability detected by watchdog"""
+        logger.error("Instability detected by watchdog - pausing interception")
+
+        self._instability_detected = True
+        self.config_manager.update(paused=True)
+
+        # Update tray status
+        self.tray.update_instability_status(True)
+
+        # Show notification
+        self.tray.show_notification(
+            "FastFileOp - Instability Detected",
+            "Interception paused due to instability. Check logs for details. Use tray menu to resume."
+        )
 
     def _open_settings(self):
-        """打开设置窗口（在独立线程中）"""
-        from .settings import SettingsWindow
-
+        """Open settings window in separate thread"""
         def _show():
             settings = SettingsWindow(self.config_manager)
             settings.show()
@@ -69,38 +135,42 @@ class FastFileOpApp:
         thread.start()
 
     def _quit(self):
-        """退出程序"""
-        logger.info("正在退出 FastFileOp...")
+        """Quit application"""
+        logger.info("Shutting down FastFileOp...")
         self._running = False
         self.hook.stop()
+        self.pipe_server.stop()
         self.tray.stop()
 
     def _create_engine(self) -> FileEngine:
-        """根据当前配置创建文件操作引擎"""
+        """Create file engine with current config"""
         config = self.config_manager.config
         return FileEngine(
             buffer_size=config.buffer_size,
-            max_workers=config.max_workers,
-            on_progress=self._on_progress,
+            max_workers=config.worker_threads,
+            progress_callback=self._on_progress,
         )
 
-    def _on_progress(self, progress):
-        """操作进度回调"""
-        if progress.state == OpState.RUNNING:
-            pct = progress.percent
-            logger.debug(
-                f"进度: {pct:.1f}% "
-                f"({progress.completed_files}/{progress.total_files} 文件)"
-            )
+    def _on_progress(self, current_file: str, file_index: int, total_files: int,
+                     bytes_done: int, bytes_total: int):
+        """Progress callback for file operations"""
+        if bytes_total > 0:
+            pct = bytes_done / bytes_total * 100
+            logger.debug(f"Progress: {pct:.1f}% ({file_index}/{total_files}) - {current_file}")
 
     def _handle_paste(self):
-        """处理粘贴操作"""
+        """Handle paste operation (Ctrl+V)"""
         config = self.config_manager.config
 
-        # 获取剪贴板文件
+        # Check if copy/move hook is enabled
+        if not config.hook_copy:
+            KeyboardHook.send_paste()
+            return
+
+        # Get clipboard files
         result = self.clipboard.get_clipboard_files()
         if result is None:
-            # 剪贴板无文件，放行
+            # No files in clipboard, forward original keystroke
             KeyboardHook.send_paste()
             return
 
@@ -109,43 +179,35 @@ class FastFileOpApp:
             KeyboardHook.send_paste()
             return
 
-        # 检查是否启用拦截
-        if is_cut and not config.intercept_move:
-            KeyboardHook.send_paste()
-            return
-        if not is_cut and not config.intercept_copy:
-            KeyboardHook.send_paste()
-            return
-
-        # 获取目标目录
+        # Get target directory
         hwnd = KeyboardHook.get_foreground_explorer_hwnd()
         dst_dir = self.shell.get_current_directory(hwnd) if hwnd else None
+
         if not dst_dir:
-            logger.warning("无法获取目标目录，放行原操作")
+            logger.warning("Cannot get target directory, forwarding original paste")
             KeyboardHook.send_paste()
             return
 
-        # 执行操作
+        # Execute operation
         with self._engine_lock:
-            engine = self._create_engine()
-            self.engine = engine
+            self.engine = self._create_engine()
 
         def _run():
             try:
                 if is_cut:
-                    logger.info(f"接管移动: {len(files)} 个文件 -> {dst_dir}")
-                    engine.move(files, dst_dir)
+                    logger.info(f"Hook: Move {len(files)} items -> {dst_dir}")
+                    self.engine.move(files, dst_dir)
                 else:
-                    logger.info(f"接管复制: {len(files)} 个文件 -> {dst_dir}")
-                    engine.copy(files, dst_dir)
+                    logger.info(f"Hook: Copy {len(files)} items -> {dst_dir}")
+                    self.engine.copy(files, dst_dir)
 
-                failed = engine.get_failed()
+                failed = self.engine.get_failed()
                 if failed:
-                    logger.warning(f"操作完成，{len(failed)} 个文件失败")
+                    logger.warning(f"Operation completed with {len(failed)} failures")
                     for fp in failed:
-                        logger.warning(f"  失败: {fp.src} - {fp.error}")
+                        logger.warning(f"  Failed: {fp.src} - {fp.error}")
             except Exception as e:
-                logger.error(f"文件操作异常: {e}")
+                logger.error(f"File operation error: {e}")
             finally:
                 with self._engine_lock:
                     self.engine = None
@@ -154,39 +216,41 @@ class FastFileOpApp:
         thread.start()
 
     def _handle_delete(self, shift_pressed: bool):
-        """处理删除操作"""
+        """Handle delete operation (Delete / Shift+Delete)"""
         config = self.config_manager.config
-        if not config.intercept_delete:
+
+        # Check if delete hook is enabled
+        if not config.hook_delete:
             KeyboardHook.send_delete()
             return
 
-        # 获取选中的文件
+        # Get selected files
         hwnd = KeyboardHook.get_foreground_explorer_hwnd()
         files = self.shell.get_selected_files(hwnd) if hwnd else []
+
         if not files:
-            logger.warning("未获取到选中文件，放行原操作")
+            logger.debug("No files selected, forwarding original delete")
             KeyboardHook.send_delete()
             return
 
         permanent = shift_pressed
 
         with self._engine_lock:
-            engine = self._create_engine()
-            self.engine = engine
+            self.engine = self._create_engine()
 
         def _run():
             try:
-                mode = "永久删除" if permanent else "移到回收站"
-                logger.info(f"接管删除({mode}): {len(files)} 个文件")
-                engine.delete(files, permanent=permanent)
+                mode = "permanent" if permanent else "recycle"
+                logger.info(f"Hook: Delete {len(files)} items ({mode})")
+                self.engine.delete(files, permanent=permanent)
 
-                failed = engine.get_failed()
+                failed = self.engine.get_failed()
                 if failed:
-                    logger.warning(f"删除完成，{len(failed)} 个文件失败")
+                    logger.warning(f"Delete completed with {len(failed)} failures")
                     for fp in failed:
-                        logger.warning(f"  失败: {fp.src} - {fp.error}")
+                        logger.warning(f"  Failed: {fp.src} - {fp.error}")
             except Exception as e:
-                logger.error(f"删除操作异常: {e}")
+                logger.error(f"Delete operation error: {e}")
             finally:
                 with self._engine_lock:
                     self.engine = None
@@ -195,7 +259,7 @@ class FastFileOpApp:
         thread.start()
 
     def _process_actions(self):
-        """处理动作队列的主循环"""
+        """Main action processing loop"""
         while self._running:
             try:
                 action, param = self.action_queue.get(timeout=0.5)
@@ -208,34 +272,60 @@ class FastFileOpApp:
                 elif action == "delete":
                     self._handle_delete(param)
                 else:
-                    logger.warning(f"未知动作: {action}")
+                    logger.warning(f"Unknown action: {action}")
             except Exception as e:
-                logger.error(f"处理动作失败: {e}")
+                logger.error(f"Action processing error: {e}")
 
     def run(self):
-        """启动应用"""
+        """Run the application"""
         logger.info("=" * 50)
-        logger.info("FastFileOp 启动")
+        logger.info("FastFileOp starting...")
+        if self._silent:
+            logger.info("Mode: Silent (auto-start)")
         logger.info("=" * 50)
 
-        # 启动系统托盘（阻塞主线程）
+        # Check for existing instance
+        if PipeServer.is_server_running():
+            logger.error("Another instance is already running!")
+            print("Error: FastFileOp is already running.", file=sys.stderr)
+            sys.exit(1)
+
+        # Ensure auto-start is registered (first run)
+        first_run = self.config_manager.ensure_auto_start_registered()
+        if first_run:
+            logger.info("Auto-start registered for first run")
+
+        # Start system tray (in background thread)
         tray_thread = self.tray.run_threaded()
 
-        # 启动键盘钩子
+        # Show notification if first run
+        if first_run:
+            # Wait a moment for tray to be ready
+            time.sleep(0.5)
+            self.tray.show_notification(
+                "FastFileOp",
+                "FastFileOp has been set to start with Windows. You can change this in Settings."
+            )
+
+        # Start keyboard hook
         self.hook.start()
 
-        # 启动动作处理循环
+        # Start named pipe server
+        self.pipe_server.start()
+
+        # Run action processing loop
         self._process_actions()
 
-        # 等待托盘线程结束
+        # Wait for tray thread
         tray_thread.join(timeout=5)
 
-        logger.info("FastFileOp 已退出")
+        logger.info("FastFileOp exited")
 
 
 def main():
-    """主入口"""
-    app = FastFileOpApp()
+    """Main entry point"""
+    args = parse_args()
+    app = FastFileOpApp(silent=args.silent)
     app.run()
 
 

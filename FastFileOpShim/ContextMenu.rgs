@@ -1,0 +1,60 @@
+// ContextMenu.rgs : ContextMenu 注册脚本
+//
+
+HKCR
+{
+    NoRemove *
+    {
+        NoRemove ShellEx
+        {
+            NoRemove ContextMenuHandlers
+            {
+                ForceRemove FastFileOp
+                {
+                    val '' = s '{B2C3D4E5-F6A7-8901-BCDE-F12345678901}'
+                }
+            }
+        }
+    }
+
+    NoRemove Directory
+    {
+        NoRemove ShellEx
+        {
+            NoRemove ContextMenuHandlers
+            {
+                ForceRemove FastFileOp
+                {
+                    val '' = s '{B2C3D4E5-F6A7-8901-BCDE-F12345678901}'
+                }
+            }
+        }
+    }
+
+    NoRemove Folder
+    {
+        NoRemove ShellEx
+        {
+            NoRemove ContextMenuHandlers
+            {
+                ForceRemove FastFileOp
+                {
+                    val '' = s '{B2C3D4E5-F6A7-8901-BCDE-F12345678901}'
+                }
+            }
+        }
+    }
+
+    NoRemove CLSID
+    {
+        ForceRemove {B2C3D4E5-F6A7-8901-BCDE-F12345678901}
+        {
+            val AppID = s '{E1F2A3B4-C5D6-7890-ABCD-EF1234567890}'
+            val 'ThreadingModel' = s 'Apartment'
+            InprocServer32 = s '%MODULE%'
+            {
+                val ThreadingModel = s 'Apartment'
+            }
+        }
+    }
+}

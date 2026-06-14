@@ -1,0 +1,46 @@
+// CopyHook.rgs : CopyHook 注册脚本
+//
+
+HKCR
+{
+    NoRemove Directory
+    {
+        NoRemove ShellEx
+        {
+            NoRemove CopyHookHandlers
+            {
+                ForceRemove FastFileOp
+                {
+                    val '' = s '{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}'
+                }
+            }
+        }
+    }
+
+    NoRemove Folder
+    {
+        NoRemove ShellEx
+        {
+            NoRemove CopyHookHandlers
+            {
+                ForceRemove FastFileOp
+                {
+                    val '' = s '{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}'
+                }
+            }
+        }
+    }
+
+    NoRemove CLSID
+    {
+        ForceRemove {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+        {
+            val AppID = s '{E1F2A3B4-C5D6-7890-ABCD-EF1234567890}'
+            val 'ThreadingModel' = s 'Apartment'
+            InprocServer32 = s '%MODULE%'
+            {
+                val ThreadingModel = s 'Apartment'
+            }
+        }
+    }
+}

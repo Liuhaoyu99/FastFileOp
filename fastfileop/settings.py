@@ -1,34 +1,34 @@
-"""FastFileOp - 设置窗口模块
+"""FastFileOp - Settings Window Module
 
-使用 tkinter 实现设置界面。
+Provides tkinter-based settings interface.
 """
 
+import logging
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Callable, Optional
+from typing import Optional
 
-from .config import ConfigManager, AppConfig
-from .logger import get_logger
-
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class SettingsWindow:
-    """设置窗口
+    """Settings window
 
-    提供：
-    - 缓冲区大小调节
-    - 接管复制/移动/删除的独立开关
-    - 开机自启设置
-    - 最大工作线程数
+    Provides controls for:
+    - Buffer size (slider)
+    - Worker threads (spinbox)
+    - Hook switches (checkboxes)
+    - Auto-start (checkbox)
+    - Debug mode (checkbox)
     """
 
-    def __init__(self, config_manager: ConfigManager):
+    def __init__(self, config_manager):
         self.config_manager = config_manager
         self._window: Optional[tk.Tk] = None
 
     def show(self):
-        """显示设置窗口"""
+        """Show settings window"""
         if self._window is not None:
             try:
                 self._window.lift()
@@ -43,128 +43,151 @@ class SettingsWindow:
         config = self.config_manager.config
 
         self._window = tk.Tk()
-        self._window.title("FastFileOp 设置")
-        self._window.geometry("480x400")
+        self._window.title("FastFileOp Settings")
+        self._window.geometry("480x420")
         self._window.resizable(False, False)
 
-        # 居中显示
+        # Center window
         self._window.update_idletasks()
         x = (self._window.winfo_screenwidth() - 480) // 2
-        y = (self._window.winfo_screenheight() - 400) // 2
+        y = (self._window.winfo_screenheight() - 420) // 2
         self._window.geometry(f"+{x}+{y}")
 
         main_frame = ttk.Frame(self._window, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # === 引擎设置 ===
-        engine_frame = ttk.LabelFrame(main_frame, text="引擎设置", padding=10)
+        # === Engine Settings ===
+        engine_frame = ttk.LabelFrame(main_frame, text="Engine Settings", padding=10)
         engine_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # 缓冲区大小
+        # Buffer size
         buf_frame = ttk.Frame(engine_frame)
         buf_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(buf_frame, text="缓冲区大小:").pack(side=tk.LEFT)
-        self._buffer_var = tk.IntVar(value=config.buffer_size // (1024 * 1024))
-        buf_spin = ttk.Spinbox(
+        ttk.Label(buf_frame, text="Buffer Size:").pack(side=tk.LEFT)
+        self._buffer_var = tk.IntVar(value=config.buffer_size_mb)
+        self._buffer_label = ttk.Label(buf_frame, text=f"{config.buffer_size_mb} MB")
+        self._buffer_label.pack(side=tk.RIGHT)
+        buf_scale = ttk.Scale(
             buf_frame,
-            from_=1,
+            from_=32,
             to=512,
-            textvariable=self._buffer_var,
-            width=8,
+            variable=self._buffer_var,
+            orient=tk.HORIZONTAL,
+            command=self._update_buffer_label,
         )
-        buf_spin.pack(side=tk.LEFT, padx=5)
-        ttk.Label(buf_frame, text="MB").pack(side=tk.LEFT)
+        buf_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
-        # 工作线程数
+        # Worker threads
         worker_frame = ttk.Frame(engine_frame)
         worker_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(worker_frame, text="最大线程数:").pack(side=tk.LEFT)
-        self._workers_var = tk.IntVar(value=config.max_workers)
+        ttk.Label(worker_frame, text="Worker Threads:").pack(side=tk.LEFT)
+        self._workers_var = tk.IntVar(value=config.worker_threads)
         worker_spin = ttk.Spinbox(
             worker_frame,
             from_=1,
-            to=16,
+            to=8,
             textvariable=self._workers_var,
             width=8,
         )
-        worker_spin.pack(side=tk.LEFT, padx=5)
+        worker_spin.pack(side=tk.RIGHT)
 
-        # === 拦截设置 ===
-        intercept_frame = ttk.LabelFrame(main_frame, text="拦截设置", padding=10)
+        # === Interception Settings ===
+        intercept_frame = ttk.LabelFrame(main_frame, text="Interception Settings", padding=10)
         intercept_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self._intercept_copy_var = tk.BooleanVar(value=config.intercept_copy)
+        self._hook_copy_var = tk.BooleanVar(value=config.hook_copy)
         ttk.Checkbutton(
             intercept_frame,
-            text="接管复制操作 (Ctrl+C / Ctrl+V)",
-            variable=self._intercept_copy_var,
+            text="Intercept Copy/Move (Ctrl+C/X, Ctrl+V)",
+            variable=self._hook_copy_var,
         ).pack(anchor=tk.W, pady=2)
 
-        self._intercept_move_var = tk.BooleanVar(value=config.intercept_move)
+        self._hook_delete_var = tk.BooleanVar(value=config.hook_delete)
         ttk.Checkbutton(
             intercept_frame,
-            text="接管移动操作 (Ctrl+X / Ctrl+V)",
-            variable=self._intercept_move_var,
+            text="Intercept Delete (Delete, Shift+Delete)",
+            variable=self._hook_delete_var,
         ).pack(anchor=tk.W, pady=2)
 
-        self._intercept_delete_var = tk.BooleanVar(value=config.intercept_delete)
-        ttk.Checkbutton(
+        self._hook_drag_var = tk.BooleanVar(value=config.hook_drag)
+        drag_check = ttk.Checkbutton(
             intercept_frame,
-            text="接管删除操作 (Delete / Shift+Delete)",
-            variable=self._intercept_delete_var,
-        ).pack(anchor=tk.W, pady=2)
+            text="Intercept Drag & Drop (requires FastFileOpShim.dll)",
+            variable=self._hook_drag_var,
+        )
+        drag_check.pack(anchor=tk.W, pady=2)
 
-        # === 系统设置 ===
-        system_frame = ttk.LabelFrame(main_frame, text="系统设置", padding=10)
+        # === System Settings ===
+        system_frame = ttk.LabelFrame(main_frame, text="System Settings", padding=10)
         system_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self._auto_start_var = tk.BooleanVar(value=config.auto_start)
+        # Read actual registry state for auto-start
+        auto_start_registered = self.config_manager.is_auto_start_registered()
+        self._auto_start_var = tk.BooleanVar(value=auto_start_registered)
         ttk.Checkbutton(
             system_frame,
-            text="开机自动启动",
+            text="Start with Windows",
             variable=self._auto_start_var,
         ).pack(anchor=tk.W, pady=2)
 
-        # === 按钮 ===
+        self._debug_var = tk.BooleanVar(value=config.debug_mode)
+        ttk.Checkbutton(
+            system_frame,
+            text="Debug Mode (verbose logging)",
+            variable=self._debug_var,
+        ).pack(anchor=tk.W, pady=2)
+
+        # === Buttons ===
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(10, 0))
 
-        ttk.Button(btn_frame, text="保存", command=self._save).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="取消", command=self._close).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text="Save", command=self._save).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=self._close).pack(side=tk.RIGHT)
 
         self._window.protocol("WM_DELETE_WINDOW", self._close)
         self._window.mainloop()
 
-    def _save(self):
-        """保存设置"""
-        try:
-            buffer_size = self._buffer_var.get() * 1024 * 1024
-            max_workers = self._workers_var.get()
-            intercept_copy = self._intercept_copy_var.get()
-            intercept_move = self._intercept_move_var.get()
-            intercept_delete = self._intercept_delete_var.get()
-            auto_start = self._auto_start_var.get()
+    def _update_buffer_label(self, value):
+        """Update buffer size label"""
+        self._buffer_label.config(text=f"{int(float(value))} MB")
 
+    def _save(self):
+        """Save settings"""
+        try:
+            buffer_size_mb = self._buffer_var.get()
+            worker_threads = self._workers_var.get()
+            hook_copy = self._hook_copy_var.get()
+            hook_delete = self._hook_delete_var.get()
+            hook_drag = self._hook_drag_var.get()
+            auto_start = self._auto_start_var.get()
+            debug_mode = self._debug_var.get()
+
+            # Update config
             self.config_manager.update(
-                buffer_size=buffer_size,
-                max_workers=max_workers,
-                intercept_copy=intercept_copy,
-                intercept_move=intercept_move,
-                intercept_delete=intercept_delete,
+                buffer_size_mb=buffer_size_mb,
+                worker_threads=worker_threads,
+                hook_copy=hook_copy,
+                hook_delete=hook_delete,
+                hook_drag=hook_drag,
+                debug_mode=debug_mode,
             )
 
-            # 开机自启单独处理（涉及注册表）
+            # Handle auto-start separately (registry)
             self.config_manager.set_auto_start(auto_start)
 
-            messagebox.showinfo("提示", "设置已保存", parent=self._window)
+            # Update debug mode
+            from .logger import set_debug_mode
+            set_debug_mode(debug_mode)
+
+            messagebox.showinfo("Success", "Settings saved.", parent=self._window)
             self._close()
 
         except Exception as e:
-            logger.error(f"保存设置失败: {e}")
-            messagebox.showerror("错误", f"保存设置失败: {e}", parent=self._window)
+            logger.error(f"Failed to save settings: {e}")
+            messagebox.showerror("Error", f"Failed to save settings: {e}", parent=self._window)
 
     def _close(self):
-        """关闭窗口"""
+        """Close window"""
         if self._window:
             self._window.destroy()
             self._window = None

@@ -1,5 +1,10 @@
-"""FastFileOp - 高速文件操作引擎模块"""
+"""FastFileOp - High-Speed File Operation Engine
 
+Multi-threaded file copy/move/delete with progress callback,
+pause/resume/cancel support, and error handling.
+"""
+
+import logging
 import os
 import shutil
 import threading
@@ -8,18 +13,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
-from .logger import get_logger
-
-logger = get_logger(__name__)
-
-# 默认缓冲区大小 64MB
-DEFAULT_BUFFER_SIZE = 64 * 1024 * 1024
+logger = logging.getLogger(__name__)
 
 
 class OpState(Enum):
-    """操作状态"""
+    """Operation state"""
     PENDING = auto()
     RUNNING = auto()
     PAUSED = auto()
@@ -29,7 +29,7 @@ class OpState(Enum):
 
 @dataclass
 class FileProgress:
-    """单个文件的进度信息"""
+    """Progress info for a single file"""
     src: str
     dst: str
     total_bytes: int = 0
@@ -40,7 +40,7 @@ class FileProgress:
 
 @dataclass
 class OperationProgress:
-    """整体操作进度"""
+    """Overall operation progress"""
     total_files: int = 0
     completed_files: int = 0
     failed_files: int = 0
@@ -56,30 +56,35 @@ class OperationProgress:
         return self.copied_bytes / self.total_bytes * 100
 
 
+# Progress callback signature
+ProgressCallback = Callable[[str, int, int, int, int], None]
+# callback(current_file, file_index, total_files, bytes_done, bytes_total)
+
+
 class FileEngine:
-    """高速文件操作引擎
+    """High-speed file operation engine
 
-    支持：
-    - copy: 多线程异步复制，大文件分块读写
-    - move: 同盘直接 rename，跨盘先复制再删除
-    - delete: 移到回收站或永久删除（覆写后删除）
-
-    所有操作支持进度回调、暂停/恢复/取消。
+    Features:
+    - Multi-threaded copy with configurable buffer size
+    - Move: same-drive rename, cross-drive copy+delete
+    - Delete: recycle bin or secure overwrite (3 passes)
+    - Progress callback, pause/resume/cancel
+    - Individual file error handling
     """
 
     def __init__(
         self,
-        buffer_size: int = DEFAULT_BUFFER_SIZE,
+        buffer_size: int = 64 * 1024 * 1024,  # 64MB
         max_workers: int = 4,
-        on_progress: Optional[Callable[[OperationProgress], None]] = None,
+        progress_callback: Optional[ProgressCallback] = None,
     ):
         self.buffer_size = buffer_size
         self.max_workers = max_workers
-        self.on_progress = on_progress
+        self.progress_callback = progress_callback
 
         self._state = OpState.PENDING
         self._pause_event = threading.Event()
-        self._pause_event.set()  # 默认不暂停
+        self._pause_event.set()  # Not paused by default
         self._cancel_event = threading.Event()
         self._progress = OperationProgress()
         self._lock = threading.Lock()
@@ -88,142 +93,196 @@ class FileEngine:
     def state(self) -> OpState:
         return self._state
 
-    def _notify_progress(self):
-        if self.on_progress:
-            try:
-                self.on_progress(self._progress)
-            except Exception:
-                pass
+    @property
+    def progress(self) -> OperationProgress:
+        return self._progress
 
-    def _check_pause_cancel(self):
-        """检查暂停和取消状态，阻塞等待暂停恢复"""
-        while self._pause_event.is_set() is False:
+    def _notify_progress(self, current_file: str = ""):
+        """Notify progress callback"""
+        if self.progress_callback:
+            try:
+                self.progress_callback(
+                    current_file,
+                    self._progress.completed_files,
+                    self._progress.total_files,
+                    self._progress.copied_bytes,
+                    self._progress.total_bytes,
+                )
+            except Exception as e:
+                logger.error(f"Progress callback error: {e}")
+
+    def _check_pause_cancel(self) -> bool:
+        """Check pause and cancel state, block if paused
+
+        Returns:
+            True if should continue, False if cancelled
+        """
+        while not self._pause_event.is_set():
             if self._cancel_event.is_set():
                 return False
             time.sleep(0.05)
         return not self._cancel_event.is_set()
 
-    def _copy_single_file(self, src: str, dst: str, fp: FileProgress) -> None:
-        """复制单个文件，大文件分块读写"""
+    def _copy_single_file(self, src: str, dst: str, file_index: int) -> FileProgress:
+        """Copy a single file with chunked read/write for large files"""
+        fp = FileProgress(src=src, dst=dst)
+
         try:
             src_size = os.path.getsize(src)
             fp.total_bytes = src_size
 
-            # 小文件直接用 copyfile
+            # Small files: direct copy
             if src_size < self.buffer_size:
                 if not self._check_pause_cancel():
-                    return
+                    return fp
                 shutil.copyfile(src, dst)
                 fp.copied_bytes = src_size
                 with self._lock:
                     self._progress.copied_bytes += src_size
                 fp.done = True
-                self._notify_progress()
-                return
+                self._notify_progress(src)
+                return fp
 
-            # 大文件分块读写
+            # Large files: chunked copy
             with open(src, "rb") as fsrc, open(dst, "wb") as fdst:
                 while True:
                     if not self._check_pause_cancel():
-                        return
-                    buf = fsrc.read(self.buffer_size)
-                    if not buf:
+                        return fp
+
+                    chunk = fsrc.read(self.buffer_size)
+                    if not chunk:
                         break
-                    fdst.write(buf)
-                    n = len(buf)
+
+                    fdst.write(chunk)
+                    n = len(chunk)
                     fp.copied_bytes += n
+
                     with self._lock:
                         self._progress.copied_bytes += n
-                    self._notify_progress()
+
+                    self._notify_progress(src)
 
             fp.done = True
+
         except Exception as e:
             fp.error = str(e)
-            logger.error(f"复制文件失败: {src} -> {dst}, 错误: {e}")
+            logger.error(f"Copy failed: {src} -> {dst}, error: {e}")
             with self._lock:
                 self._progress.failed_files += 1
+
         finally:
             with self._lock:
                 self._progress.completed_files += 1
-            self._notify_progress()
+            self._notify_progress(src)
 
-    def _copy_directory(self, src_dir: str, dst_dir: str, fp: FileProgress) -> None:
-        """复制整个目录"""
+        return fp
+
+    def _copy_directory(self, src_dir: str, dst_dir: str, file_index: int) -> FileProgress:
+        """Copy a directory recursively"""
+        fp = FileProgress(src=src_dir, dst=dst_dir)
+
         try:
             src_path = Path(src_dir)
+
+            # Calculate total size
             total_size = sum(f.stat().st_size for f in src_path.rglob("*") if f.is_file())
             fp.total_bytes = total_size
 
             for item in src_path.rglob("*"):
                 if not self._check_pause_cancel():
-                    return
+                    return fp
+
                 rel = item.relative_to(src_path)
                 target = Path(dst_dir) / rel
+
                 if item.is_dir():
                     target.mkdir(parents=True, exist_ok=True)
                 else:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(str(item), str(target))
+
                     sz = item.stat().st_size
                     fp.copied_bytes += sz
                     with self._lock:
                         self._progress.copied_bytes += sz
-                    self._notify_progress()
+
+                    self._notify_progress(str(item))
 
             fp.done = True
+
         except Exception as e:
             fp.error = str(e)
-            logger.error(f"复制目录失败: {src_dir} -> {dst_dir}, 错误: {e}")
+            logger.error(f"Directory copy failed: {src_dir} -> {dst_dir}, error: {e}")
             with self._lock:
                 self._progress.failed_files += 1
+
         finally:
             with self._lock:
                 self._progress.completed_files += 1
-            self._notify_progress()
+            self._notify_progress(src_dir)
+
+        return fp
 
     def _same_drive(self, p1: str, p2: str) -> bool:
-        """判断两个路径是否在同一驱动器"""
+        """Check if two paths are on the same drive"""
         try:
             return os.path.splitdrive(os.path.abspath(p1))[0].lower() == \
                    os.path.splitdrive(os.path.abspath(p2))[0].lower()
         except Exception:
             return False
 
-    def _overwrite_delete(self, filepath: str) -> None:
-        """覆写文件内容后删除（永久删除模式）"""
-        try:
-            size = os.path.getsize(filepath)
+    def _secure_delete(self, filepath: str, passes: int = 3) -> None:
+        """Securely delete a file by overwriting before deletion
+
+        Args:
+            filepath: Path to file
+            passes: Number of overwrite passes (default 3)
+        """
+        size = os.path.getsize(filepath)
+
+        for pass_num in range(passes):
+            if not self._check_pause_cancel():
+                return
+
             with open(filepath, "wb") as f:
-                # 分块覆写零
                 remaining = size
                 while remaining > 0:
                     if not self._check_pause_cancel():
                         return
-                    chunk = min(remaining, self.buffer_size)
-                    f.write(b"\x00" * chunk)
-                    remaining -= chunk
-            os.remove(filepath)
-        except Exception as e:
-            logger.error(f"覆写删除失败: {filepath}, 错误: {e}")
-            raise
+                    chunk_size = min(remaining, self.buffer_size)
+                    # Alternate between different patterns
+                    if pass_num % 3 == 0:
+                        f.write(b"\x00" * chunk_size)
+                    elif pass_num % 3 == 1:
+                        f.write(b"\xFF" * chunk_size)
+                    else:
+                        f.write(os.urandom(chunk_size))
+                    remaining -= chunk_size
+
+            # Force flush to disk
+            with open(filepath, "rb+") as f:
+                f.flush()
+                os.fsync(f.fileno())
+
+        os.remove(filepath)
 
     def copy(self, src_list: List[str], dst_dir: str) -> OperationProgress:
-        """多线程异步复制文件/目录列表到目标目录
+        """Copy files/directories to destination
 
         Args:
-            src_list: 源路径列表（文件或目录）
-            dst_dir: 目标目录
+            src_list: Source paths (files or directories)
+            dst_dir: Destination directory
 
         Returns:
-            OperationProgress: 操作进度结果
+            OperationProgress with results
         """
         self._reset_state()
         self._state = OpState.RUNNING
-        logger.info(f"开始复制: {len(src_list)} 个项目 -> {dst_dir}")
+        logger.info(f"Starting copy: {len(src_list)} items -> {dst_dir}")
 
         os.makedirs(dst_dir, exist_ok=True)
 
-        # 计算总大小
+        # Calculate total size
         total_bytes = 0
         for src in src_list:
             p = Path(src)
@@ -235,49 +294,52 @@ class FileEngine:
         self._progress.total_files = len(src_list)
         self._progress.total_bytes = total_bytes
 
-        # 构建任务
+        # Build tasks
         tasks = []
-        for src in src_list:
+        for i, src in enumerate(src_list):
             src_name = os.path.basename(src.rstrip("\\/"))
             dst = os.path.join(dst_dir, src_name)
-            fp = FileProgress(src=src, dst=dst)
-            self._progress.file_progresses.append(fp)
-            tasks.append((src, dst, fp))
+            tasks.append((src, dst, i))
 
         self._notify_progress()
 
+        # Execute with thread pool
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = {}
-            for src, dst, fp in tasks:
+            for src, dst, idx in tasks:
                 if os.path.isdir(src):
-                    future = executor.submit(self._copy_directory, src, dst, fp)
+                    future = executor.submit(self._copy_directory, src, dst, idx)
                 else:
-                    future = executor.submit(self._copy_single_file, src, dst, fp)
-                futures[future] = fp
+                    future = executor.submit(self._copy_single_file, src, dst, idx)
+                futures[future] = (src, dst)
 
             for future in as_completed(futures):
                 if self._cancel_event.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
                     break
 
+                fp = future.result()
+                self._progress.file_progresses.append(fp)
+
         self._finalize_state()
         return self._progress
 
     def move(self, src_list: List[str], dst_dir: str) -> OperationProgress:
-        """移动文件/目录列表到目标目录
+        """Move files/directories to destination
 
-        同盘直接 rename，跨盘先复制再删除源文件。
+        Same-drive: direct rename
+        Cross-drive: copy then delete source
 
         Args:
-            src_list: 源路径列表
-            dst_dir: 目标目录
+            src_list: Source paths
+            dst_dir: Destination directory
 
         Returns:
-            OperationProgress: 操作进度结果
+            OperationProgress with results
         """
         self._reset_state()
         self._state = OpState.RUNNING
-        logger.info(f"开始移动: {len(src_list)} 个项目 -> {dst_dir}")
+        logger.info(f"Starting move: {len(src_list)} items -> {dst_dir}")
 
         os.makedirs(dst_dir, exist_ok=True)
 
@@ -290,41 +352,50 @@ class FileEngine:
             else:
                 cross_drive_items.append(src)
 
-        # 同盘：直接 rename
+        # Same-drive: direct rename
         for src in same_drive_items:
             if not self._check_pause_cancel():
                 break
+
             src_name = os.path.basename(src.rstrip("\\/"))
             dst = os.path.join(dst_dir, src_name)
             fp = FileProgress(src=src, dst=dst)
             self._progress.file_progresses.append(fp)
             self._progress.total_files += 1
+
             try:
                 os.rename(src, dst)
                 fp.done = True
-                src_size = 0
+
+                # Calculate size for progress
                 p = Path(dst)
                 if p.is_file():
-                    src_size = p.stat().st_size
+                    sz = p.stat().st_size
                 elif p.is_dir():
-                    src_size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
-                fp.copied_bytes = src_size
-                fp.total_bytes = src_size
+                    sz = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                else:
+                    sz = 0
+
+                fp.total_bytes = sz
+                fp.copied_bytes = sz
                 with self._lock:
                     self._progress.completed_files += 1
-                    self._progress.copied_bytes += src_size
+                    self._progress.copied_bytes += sz
+
             except Exception as e:
                 fp.error = str(e)
-                logger.error(f"重命名失败: {src} -> {dst}, 错误: {e}")
+                logger.error(f"Rename failed: {src} -> {dst}, error: {e}")
                 with self._lock:
                     self._progress.failed_files += 1
                     self._progress.completed_files += 1
-            self._notify_progress()
 
-        # 跨盘：先复制再删除
+            self._notify_progress(src)
+
+        # Cross-drive: copy then delete
         if cross_drive_items:
             copy_progress = self.copy(cross_drive_items, dst_dir)
-            # 复制完成后删除源文件
+
+            # Delete sources after successful copy
             if copy_progress.state != OpState.CANCELLED:
                 for fp in copy_progress.file_progresses:
                     if fp.done and fp.error is None:
@@ -334,65 +405,78 @@ class FileEngine:
                             else:
                                 os.remove(fp.src)
                         except Exception as e:
-                            logger.error(f"删除源文件失败: {fp.src}, 错误: {e}")
+                            logger.error(f"Failed to delete source: {fp.src}, error: {e}")
 
         self._finalize_state()
         return self._progress
 
     def delete(self, file_list: List[str], permanent: bool = False) -> OperationProgress:
-        """删除文件/目录列表
+        """Delete files/directories
 
         Args:
-            file_list: 要删除的路径列表
-            permanent: True 时覆写后彻底删除，False 时移到回收站
+            file_list: Paths to delete
+            permanent: If True, secure overwrite then delete; otherwise, move to recycle bin
 
         Returns:
-            OperationProgress: 操作进度结果
+            OperationProgress with results
         """
         self._reset_state()
         self._state = OpState.RUNNING
-        mode = "永久" if permanent else "回收站"
-        logger.info(f"开始删除({mode}): {len(file_list)} 个项目")
+        mode = "permanent" if permanent else "recycle"
+        logger.info(f"Starting delete ({mode}): {len(file_list)} items")
 
         self._progress.total_files = len(file_list)
 
         for src in file_list:
             if not self._check_pause_cancel():
                 break
+
             fp = FileProgress(src=src, dst="")
             self._progress.file_progresses.append(fp)
+
             try:
                 if permanent:
                     if os.path.isdir(src):
-                        # 目录下每个文件覆写删除
+                        # Secure delete all files in directory
                         for item in Path(src).rglob("*"):
                             if not self._check_pause_cancel():
                                 break
                             if item.is_file():
-                                self._overwrite_delete(str(item))
+                                self._secure_delete(str(item))
                         shutil.rmtree(src, ignore_errors=True)
                     else:
-                        self._overwrite_delete(src)
+                        self._secure_delete(src)
                 else:
-                    self._recycle(src)
+                    self._move_to_recycle_bin(src)
+
                 fp.done = True
                 with self._lock:
                     self._progress.completed_files += 1
+
             except Exception as e:
                 fp.error = str(e)
-                logger.error(f"删除失败: {src}, 错误: {e}")
+                logger.error(f"Delete failed: {src}, error: {e}")
                 with self._lock:
                     self._progress.failed_files += 1
                     self._progress.completed_files += 1
-            self._notify_progress()
+
+            self._notify_progress(src)
 
         self._finalize_state()
         return self._progress
 
-    def _recycle(self, path: str) -> None:
-        """将文件/目录移到回收站"""
+    def _move_to_recycle_bin(self, path: str) -> None:
+        """Move file/directory to recycle bin using send2trash"""
+        try:
+            from send2trash import send2trash
+            send2trash(path)
+        except ImportError:
+            # Fallback to Windows API
+            self._recycle_win32(path)
+
+    def _recycle_win32(self, path: str) -> None:
+        """Move to recycle bin using Windows Shell API"""
         import ctypes
-        # 使用 Windows Shell API 移到回收站
         from ctypes import wintypes
 
         class SHFILEOPSTRUCT(ctypes.Structure):
@@ -415,8 +499,7 @@ class FileEngine:
         fileop = SHFILEOPSTRUCT()
         fileop.hwnd = 0
         fileop.wFunc = FO_DELETE
-        # pFrom 需要双 null 结尾
-        fileop.pFrom = path + "\0"
+        fileop.pFrom = path + "\0"  # Double-null terminated
         fileop.pTo = None
         fileop.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
         fileop.fAnyOperationsAborted = False
@@ -425,44 +508,45 @@ class FileEngine:
 
         result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(fileop))
         if result != 0:
-            raise OSError(f"SHFileOperationW 返回错误码: {result}")
+            raise OSError(f"SHFileOperationW returned error: {result}")
 
     def pause(self):
-        """暂停当前操作"""
+        """Pause current operation"""
         self._state = OpState.PAUSED
         self._pause_event.clear()
-        logger.info("操作已暂停")
+        logger.info("Operation paused")
 
     def resume(self):
-        """恢复当前操作"""
+        """Resume current operation"""
         self._state = OpState.RUNNING
         self._pause_event.set()
-        logger.info("操作已恢复")
+        logger.info("Operation resumed")
 
     def cancel(self):
-        """取消当前操作"""
+        """Cancel current operation"""
         self._cancel_event.set()
-        self._pause_event.set()  # 解除暂停阻塞
+        self._pause_event.set()  # Unblock pause
         self._state = OpState.CANCELLED
-        logger.info("操作已取消")
+        logger.info("Operation cancelled")
 
     def _reset_state(self):
-        """重置操作状态"""
+        """Reset operation state"""
         self._state = OpState.PENDING
         self._pause_event.set()
         self._cancel_event.clear()
         self._progress = OperationProgress()
 
     def _finalize_state(self):
-        """完成操作后设置最终状态"""
+        """Set final state after operation completes"""
         if self._state != OpState.CANCELLED:
             self._state = OpState.COMPLETED
+
+        success_count = self._progress.completed_files - self._progress.failed_files
         logger.info(
-            f"操作完成: 状态={self._state.name}, "
-            f"成功={self._progress.completed_files - self._progress.failed_files}, "
-            f"失败={self._progress.failed_files}"
+            f"Operation complete: state={self._state.name}, "
+            f"success={success_count}, failed={self._progress.failed_files}"
         )
 
     def get_failed(self) -> List[FileProgress]:
-        """获取失败的文件列表"""
+        """Get list of failed files"""
         return [fp for fp in self._progress.file_progresses if fp.error is not None]

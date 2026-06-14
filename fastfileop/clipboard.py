@@ -1,20 +1,18 @@
-"""FastFileOp - 剪贴板监控模块
+"""FastFileOp - Clipboard Monitoring Module
 
-监控剪贴板中的 CF_HDROP 格式（文件列表），
-判断是复制操作还是剪切操作。
+Monitors clipboard for CF_HDROP format (file list) and
+detects copy vs cut operation via Preferred DropEffect.
 """
 
 import ctypes
 from ctypes import wintypes
+import logging
 from typing import List, Optional, Tuple
 
-from .logger import get_logger
+logger = logging.getLogger(__name__)
 
-logger = get_logger(__name__)
-
-# Windows 剪贴板常量
+# Windows clipboard constants
 CF_HDROP = 15
-CF_PREFERREDDROPEFFECT = ctypes.c_uint(0x00001657).value  # 注册的剪贴板格式
 
 DROPEFFECT_COPY = 1
 DROPEFFECT_MOVE = 2
@@ -24,17 +22,17 @@ kernel32 = ctypes.windll.kernel32
 
 
 class ClipboardMonitor:
-    """剪贴板监控器
+    """Clipboard monitor
 
-    检测剪贴板中是否包含文件路径（CF_HDROP），
-    并判断是复制还是剪切操作。
+    Detects files in clipboard (CF_HDROP) and determines
+    if it's a copy or cut operation.
     """
 
     def __init__(self):
         self._cf_preferred_drop_effect = 0
 
     def _register_format(self) -> int:
-        """注册或获取剪贴板格式"""
+        """Register or get clipboard format"""
         if self._cf_preferred_drop_effect == 0:
             self._cf_preferred_drop_effect = user32.RegisterClipboardFormatW(
                 "Preferred DropEffect"
@@ -42,30 +40,30 @@ class ClipboardMonitor:
         return self._cf_preferred_drop_effect
 
     def get_clipboard_files(self) -> Optional[Tuple[List[str], bool]]:
-        """获取剪贴板中的文件列表和操作类型
+        """Get files from clipboard and operation type
 
         Returns:
-            (文件路径列表, 是否为剪切操作) 或 None（剪贴板无文件）
+            (file_list, is_cut) or None if no files in clipboard
         """
         files = None
         is_cut = False
 
         if not user32.OpenClipboard(0):
-            logger.debug("无法打开剪贴板")
+            logger.debug("Cannot open clipboard")
             return None
 
         try:
-            # 检查是否有 CF_HDROP
+            # Check for CF_HDROP
             h_drop = user32.GetClipboardData(CF_HDROP)
             if not h_drop:
                 return None
 
-            # 读取文件列表
+            # Read file list
             files = self._read_hdrop(h_drop)
             if not files:
                 return None
 
-            # 检查是否为剪切操作
+            # Check if cut operation
             is_cut = self._check_cut()
 
         finally:
@@ -74,16 +72,15 @@ class ClipboardMonitor:
         return files, is_cut
 
     def _read_hdrop(self, h_drop: int) -> List[str]:
-        """从 CF_HDROP 句柄读取文件路径列表"""
+        """Read file paths from CF_HDROP handle"""
         files = []
+
         try:
-            # 锁定内存获取指针
             ptr = kernel32.GlobalLock(h_drop)
             if not ptr:
                 return files
 
             try:
-                # DROPFILES 结构体: 第一个 DWORD 是结构体大小
                 class DROPFILES(ctypes.Structure):
                     _fields_ = [
                         ("pFiles", wintypes.DWORD),
@@ -96,15 +93,16 @@ class ClipboardMonitor:
                 offset = dropfiles.pFiles
 
                 if dropfiles.fWide:
-                    # Unicode 字符串
+                    # Unicode strings
                     char_ptr = ctypes.c_wchar_p(ptr + offset)
                     i = 0
                     while True:
                         s = char_ptr.value
                         if not s:
-                            # 双 null 结尾，连续两个空字符串表示结束
-                            # 检查下一个
-                            char_ptr2 = ctypes.c_wchar_p(ptr + offset + (i + 1) * ctypes.sizeof(ctypes.c_wchar))
+                            # Check for double null terminator
+                            char_ptr2 = ctypes.c_wchar_p(
+                                ptr + offset + (i + 1) * ctypes.sizeof(ctypes.c_wchar)
+                            )
                             if not char_ptr2.value:
                                 break
                             i += 1
@@ -115,7 +113,7 @@ class ClipboardMonitor:
                             ptr + offset + i * ctypes.sizeof(ctypes.c_wchar)
                         )
                 else:
-                    # ANSI 字符串
+                    # ANSI strings
                     char_ptr = ctypes.c_char_p(ptr + offset)
                     while True:
                         s = char_ptr.value
@@ -129,12 +127,12 @@ class ClipboardMonitor:
                 kernel32.GlobalUnlock(h_drop)
 
         except Exception as e:
-            logger.error(f"读取剪贴板文件列表失败: {e}")
+            logger.error(f"Failed to read clipboard files: {e}")
 
         return files
 
     def _check_cut(self) -> bool:
-        """检查剪贴板是否为剪切操作（Preferred DropEffect）"""
+        """Check if clipboard contains cut operation (Preferred DropEffect)"""
         try:
             fmt = self._register_format()
             h_data = user32.GetClipboardData(fmt)
@@ -152,11 +150,11 @@ class ClipboardMonitor:
                 kernel32.GlobalUnlock(h_data)
 
         except Exception as e:
-            logger.error(f"检查剪切标志失败: {e}")
+            logger.error(f"Failed to check cut flag: {e}")
             return False
 
     def has_files(self) -> bool:
-        """快速检查剪贴板是否包含文件"""
+        """Quick check if clipboard contains files"""
         if not user32.OpenClipboard(0):
             return False
         try:

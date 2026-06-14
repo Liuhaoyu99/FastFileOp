@@ -1,124 +1,154 @@
-# FastFileOp - 高速文件操作工具
+# FastFileOp - High-Speed File Operations for Windows
 
-替代 Windows 系统默认的文件复制、移动和删除操作，改用自定义的高速多线程引擎执行。
+Replace Windows default file copy/move/delete with a custom high-speed multi-threaded engine.
 
-## 功能特性
+## Architecture
 
-- **高速文件操作引擎**：多线程并发，大文件分块读写（默认 64MB 缓冲区）
-- **Ctrl+C / Ctrl+V 接管**：在资源管理器中自动拦截粘贴，使用高速引擎复制/移动
-- **Delete / Shift+Delete 接管**：拦截删除操作，支持移到回收站或永久删除（覆写后删除）
-- **系统托盘图标**：右键菜单可暂停/恢复拦截、打开设置、退出
-- **设置窗口**：缓冲区大小、线程数、各操作独立开关、开机自启
+```
++-------------------+          Named Pipe          +-------------------+
+|                   |   \\.\pipe\FastFileOpPipe   |                   |
+|  FastFileOpShim   |<--------------------------->|   Python Service  |
+|  (C++ Shell Ext)  |         JSON Messages        |   (FastFileOp)    |
+|                   |                              |                   |
++-------------------+                              +-------------------+
+        |                                                   |
+        | Intercepts:                                       | Components:
+        | - Copy/Move (ICopyHook)                          | - FileEngine
+        | - Paste (IContextMenu)                           | - KeyboardHook
+        | - Drag (IDropTarget)                             | - PipeServer
+        | - Delete (IExplorerCommand)                      | - TrayIcon
+        v                                                   v
++-------------------+                              +-------------------+
+| Windows Explorer  |                              |   File System     |
++-------------------+                              +-------------------+
 
-## 项目结构
++-------------------+
+| Keyboard Hook     |  (Python - WH_KEYBOARD_LL)
+| - Ctrl+V          |
+| - Delete          |
+| - Shift+Delete    |
++-------------------+
+```
+
+## Features
+
+- **High-Speed Engine**: Multi-threaded file operations with configurable buffer size (32MB-512MB)
+- **Smart Move**: Same-drive uses rename, cross-drive uses copy+delete
+- **Secure Delete**: 3-pass overwrite for permanent deletion
+- **Dual Interception**: Both C++ Shell Extension and Python keyboard hook
+- **System Tray**: Status indicator with pause/resume and settings
+- **Named Pipe IPC**: Communication between C++ DLL and Python service
+
+## Project Structure
 
 ```
 fastfileop/
-├── fastfileop/
-│   ├── __init__.py      # 包初始化
-│   ├── __main__.py      # 主入口，协调各模块
-│   ├── engine.py        # 高速文件操作引擎
-│   ├── clipboard.py     # 剪贴板监控（CF_HDROP）
-│   ├── hook.py          # 全局键盘钩子（WH_KEYBOARD_LL）
-│   ├── shell.py         # Shell COM 集成（获取选中文件）
-│   ├── config.py        # 配置管理
-│   ├── logger.py        # 日志模块
-│   ├── tray.py          # 系统托盘
-│   └── settings.py      # 设置窗口（tkinter）
+├── fastfileop/              # Python package
+│   ├── __init__.py
+│   ├── __main__.py          # Main entry point
+│   ├── config.py            # Configuration management
+│   ├── logger.py            # Logging with daily rotation
+│   ├── engine.py            # High-speed file operation engine
+│   ├── pipe_server.py       # Named pipe server
+│   ├── hook.py              # Global keyboard hook
+│   ├── clipboard.py         # Clipboard monitoring
+│   ├── shell.py             # Shell COM integration
+│   ├── tray.py              # System tray icon
+│   └── settings.py          # Settings window
+│
+├── FastFileOpShim/          # C++ Shell Extension
+│   ├── FastFileOpShim.sln
+│   ├── FastFileOpShim.vcxproj
+│   ├── *.h / *.cpp
+│   ├── *.rgs
+│   ├── install.bat
+│   └── uninstall.bat
+│
 ├── requirements.txt
-├── .gitignore
+├── FastFileOp.spec          # PyInstaller config
 └── README.md
 ```
 
-## 安装
+## Installation
+
+### Python Service
 
 ```bash
-# 克隆项目
-git clone <repo-url> fastfileop
-cd fastfileop
-
-# 创建虚拟环境（推荐）
-python -m venv venv
-venv\Scripts\activate
-
-# 安装依赖
+# Install dependencies
 pip install -r requirements.txt
-```
 
-## 运行
-
-```bash
-# 直接运行
+# Run directly
 python -m fastfileop
-
-# 或
-python fastfileop/__main__.py
 ```
 
-## 打包
+### C++ Shell Extension
 
-### PyInstaller
+1. Open `FastFileOpShim/FastFileOpShim.sln` in Visual Studio 2022
+2. Build in `Release | x64` configuration
+3. Run `install.bat` as Administrator
+4. Restart Explorer or log off/on
+
+## Usage
+
+1. Start the Python service (runs in system tray)
+2. Optionally install the C++ Shell Extension for drag/drop interception
+3. Use Ctrl+C/X/V or Delete in Windows Explorer
+4. Operations are intercepted and handled by FastFileOp
+
+### Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| Ctrl+C then Ctrl+V | Copy files |
+| Ctrl+X then Ctrl+V | Move files |
+| Delete | Move to recycle bin |
+| Shift+Delete | Permanent delete (3-pass overwrite) |
+
+## Configuration
+
+Config file: `%APPDATA%\FastFileOp\config.json`
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| buffer_size_mb | 64 | Read/write buffer size (32-512 MB) |
+| worker_threads | 4 | Number of concurrent threads |
+| hook_copy | true | Intercept copy/move operations |
+| hook_delete | true | Intercept delete operations |
+| hook_drag | true | Intercept drag operations (requires DLL) |
+| auto_start | false | Start with Windows |
+| debug_mode | false | Enable verbose logging |
+
+## Logs
+
+Logs are stored in `%APPDATA%\FastFileOp\logs\` with daily rotation, keeping the last 7 days.
+
+## Building with PyInstaller
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --name FastFileOp fastfileop/__main__.py
+pyinstaller FastFileOp.spec
 ```
 
-### Nuitka
+Output: `dist/FastFileOp.exe`
 
-```bash
-pip install nuitka
-python -m nuitka --onefile --windows-disable-console --output-filename=FastFileOp.exe fastfileop/__main__.py
-```
+## Known Limitations
 
-## 使用说明
+1. **Drag & Drop**: Requires C++ Shell Extension; Python hook cannot intercept drag operations
+2. **ICopyHook**: Only intercepts folder operations, not individual files
+3. **Third-party File Managers**: Only works with Windows Explorer (CabinetWClass/ExploreWClass)
+4. **UAC Files**: Cannot operate on files requiring administrator privileges
+5. **Locked Files**: Files locked by other processes cannot be operated on
+6. **Network Paths**: UNC paths may have limited support
+7. **Long Paths**: Paths over 260 characters may require special handling
+8. **Keyboard Hook Conflicts**: May conflict with other applications using global hooks
 
-1. 启动后程序在系统托盘显示图标
-2. 在资源管理器中使用 Ctrl+C / Ctrl+X 复制或剪切文件
-3. 在目标目录按 Ctrl+V 粘贴，程序自动接管操作
-4. 在资源管理器中选中文件后：
-   - 按 Delete 移到回收站
-   - 按 Shift+Delete 永久删除（覆写后删除）
-5. 右键托盘图标可暂停/恢复拦截、修改设置或退出
-
-## 配置
-
-配置文件位于 `%APPDATA%\FastFileOp\config.json`，可通过设置窗口修改：
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| buffer_size | 67108864 (64MB) | 文件读写缓冲区大小 |
-| max_workers | 4 | 最大并发线程数 |
-| intercept_copy | true | 是否接管复制操作 |
-| intercept_move | true | 是否接管移动操作 |
-| intercept_delete | true | 是否接管删除操作 |
-| auto_start | false | 是否开机自启 |
-
-## 日志
-
-日志文件位于 `%APPDATA%\FastFileOp\logs\fastfileop.log`，自动轮转（5MB × 5 份）。
-
-## 已知限制
-
-1. **拖拽操作无法拦截**：Windows 拖拽操作不经过键盘钩子，无法被本工具接管
-2. **第三方文件管理器不兼容**：仅支持 Windows 资源管理器（CabinetWClass / ExploreWClass 窗口类），如 Total Commander、Directory Opus 等第三方文件管理器不受支持
-3. **剪贴板格式依赖**：依赖 CF_HDROP 和 Preferred DropEffect 剪贴板格式，部分应用可能不遵循此格式
-4. **UAC 权限**：操作需要管理员权限的文件时会失败
-5. **网络路径**：UNC 路径（如 `\\server\share`）的支持有限
-6. **长路径**：超过 260 字符的路径可能需要特殊处理
-7. **文件锁定**：被其他进程锁定的文件无法操作
-8. **快捷方式**：.lnk 快捷方式文件的处理与资源管理器行为可能不同
-9. **键盘钩子冲突**：与其他使用全局键盘钩子的软件可能存在冲突
-10. **COM 初始化**：Shell COM 接口需要在 STA 线程中使用，多线程环境下需注意
-
-## 技术栈
+## Dependencies
 
 - Python 3.11+
-- pywin32 - Windows API 调用
-- pystray + Pillow - 系统托盘图标
-- tkinter - 设置界面（Python 内置）
-- ctypes - 底层 Windows API 调用
+- pywin32 - Windows API access
+- pystray - System tray icon
+- Pillow - Image processing (pystray dependency)
+- send2trash - Move files to recycle bin
 
-## 许可证
+## License
 
 MIT License

@@ -1,21 +1,21 @@
-"""FastFileOp - 全局键盘钩子模块
+"""FastFileOp - Global Keyboard Hook Module
 
-使用 WH_KEYBOARD_LL 全局键盘钩子拦截：
-- Ctrl+V：当剪贴板含文件且当前窗口为资源管理器时接管粘贴
-- Delete / Shift+Delete：当当前窗口为资源管理器时接管删除
+Uses SetWindowsHookEx with WH_KEYBOARD_LL to intercept:
+- Ctrl+V: Check clipboard for files, intercept paste in Explorer
+- Delete / Shift+Delete: Get selected files in Explorer, intercept delete
 """
 
 import ctypes
 import ctypes.wintypes as wintypes
-import threading
+import logging
 import queue
-from typing import Callable, Optional
+import threading
+import time
+from typing import Callable, Optional, Tuple
 
-from .logger import get_logger
+logger = logging.getLogger(__name__)
 
-logger = get_logger(__name__)
-
-# Windows 常量
+# Windows constants
 WH_KEYBOARD_LL = 13
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
@@ -29,14 +29,15 @@ VK_SHIFT = 0x10
 VK_LSHIFT = 0xA0
 VK_RSHIFT = 0xA1
 
+# Explorer window class names
+EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass"}
+
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
 
-# 窗口类名常量
-EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass"}
-
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
+    """Low-level keyboard hook structure"""
     _fields_ = [
         ("vkCode", wintypes.DWORD),
         ("scanCode", wintypes.DWORD),
@@ -46,66 +47,72 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
     ]
 
 
-# 钩子回调类型
+# Hook callback type
 HOOKPROC = ctypes.CFUNCTYPE(
     ctypes.c_int,
-    ctypes.c_int,    # nCode
-    wintypes.WPARAM,  # wParam
-    wintypes.LPARAM,  # lParam
+    ctypes.c_int,      # nCode
+    wintypes.WPARAM,   # wParam
+    wintypes.LPARAM,   # lParam
 )
 
 
 class KeyboardHook:
-    """全局键盘钩子
+    """Global keyboard hook
 
-    拦截 Ctrl+V 和 Delete/Shift+Delete，通过队列与主引擎通信。
+    Intercepts Ctrl+V and Delete/Shift+Delete in Windows Explorer.
+    Uses queue for communication with main thread.
     """
 
     def __init__(
         self,
         action_queue: queue.Queue,
-        is_intercepting: Callable[[], bool],
+        is_hooking_enabled: Callable[[], bool],
     ):
         """
         Args:
-            action_queue: 动作队列，钩子检测到需要接管的操作时放入队列
-            is_intercepting: 返回是否正在拦截的回调
+            action_queue: Queue to send intercepted actions
+            is_hooking_enabled: Callback to check if hooking is enabled
         """
         self.action_queue = action_queue
-        self.is_intercepting = is_intercepting
+        self.is_hooking_enabled = is_hooking_enabled
 
         self._hook_id = None
         self._hook_proc = None
-        self._thread = None
+        self._thread: Optional[threading.Thread] = None
         self._running = False
 
     def start(self):
-        """启动键盘钩子（在新线程中运行消息循环）"""
+        """Start the keyboard hook in a background thread"""
         if self._running:
             return
+
         self._running = True
         self._thread = threading.Thread(target=self._hook_loop, daemon=True)
         self._thread.start()
-        logger.info("键盘钩子已启动")
+        logger.info("Keyboard hook started")
 
     def stop(self):
-        """停止键盘钩子"""
+        """Stop the keyboard hook"""
         self._running = False
+
         if self._hook_id:
             user32.UnhookWindowsHookEx(self._hook_id)
             self._hook_id = None
+
         if self._thread and self._thread.is_alive():
-            # 发送消息以退出消息循环
+            # Post quit message to exit message loop
             user32.PostThreadMessageW(
                 kernel32.GetThreadId(self._thread.ident),
                 0x0012,  # WM_QUIT
                 0, 0,
             )
-        logger.info("键盘钩子已停止")
+
+        logger.info("Keyboard hook stopped")
 
     def _hook_loop(self):
-        """钩子线程的消息循环"""
+        """Hook thread message loop"""
         self._hook_proc = HOOKPROC(self._low_level_keyboard_proc)
+
         self._hook_id = user32.SetWindowsHookExW(
             WH_KEYBOARD_LL,
             self._hook_proc,
@@ -114,11 +121,11 @@ class KeyboardHook:
         )
 
         if not self._hook_id:
-            logger.error("设置键盘钩子失败")
+            logger.error("Failed to set keyboard hook")
             self._running = False
             return
 
-        # 消息循环
+        # Message loop
         msg = wintypes.MSG()
         while self._running:
             result = user32.PeekMessageW(ctypes.byref(msg), 0, 0, 0, 1)
@@ -126,11 +133,11 @@ class KeyboardHook:
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
             else:
-                ctypes.windll.kernel32.Sleep(1)
+                kernel32.Sleep(1)
 
     def _low_level_keyboard_proc(self, nCode, wParam, lParam):
-        """低级键盘钩子回调"""
-        if nCode >= 0 and self.is_intercepting():
+        """Low-level keyboard hook callback"""
+        if nCode >= 0 and self.is_hooking_enabled():
             kb = KBDLLHOOKSTRUCT.from_address(lParam)
             vk = kb.vkCode
 
@@ -139,25 +146,25 @@ class KeyboardHook:
                 if vk == VK_V and self._is_ctrl_pressed():
                     if self._is_explorer_window():
                         self.action_queue.put(("paste", None))
-                        return 1  # 拦截
+                        return 1  # Intercept
 
                 # Delete / Shift+Delete
                 if vk == VK_DELETE:
                     if self._is_explorer_window():
                         shift = self._is_shift_pressed()
                         self.action_queue.put(("delete", shift))
-                        return 1  # 拦截
+                        return 1  # Intercept
 
         return user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
 
     @staticmethod
     def _is_ctrl_pressed() -> bool:
-        """检查 Ctrl 键是否按下"""
+        """Check if Ctrl key is pressed"""
         return bool(user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
 
     @staticmethod
     def _is_shift_pressed() -> bool:
-        """检查 Shift 键是否按下"""
+        """Check if Shift key is pressed"""
         return bool(
             user32.GetAsyncKeyState(VK_SHIFT) & 0x8000
             or user32.GetAsyncKeyState(VK_LSHIFT) & 0x8000
@@ -166,7 +173,7 @@ class KeyboardHook:
 
     @staticmethod
     def _is_explorer_window() -> bool:
-        """检查当前前台窗口是否为资源管理器"""
+        """Check if foreground window is Windows Explorer"""
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
             return False
@@ -177,25 +184,21 @@ class KeyboardHook:
 
     @staticmethod
     def get_foreground_explorer_hwnd() -> Optional[int]:
-        """获取当前前台资源管理器窗口句柄"""
+        """Get foreground Explorer window handle if it's Explorer"""
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
             return None
 
         class_name = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(hwnd, class_name, 256)
+
         if class_name.value in EXPLORER_CLASSES:
             return hwnd
         return None
 
     @staticmethod
     def send_paste():
-        """模拟发送 Ctrl+V 键盘事件（放行时使用）"""
-        import ctypes
-
-        VK_CONTROL = 0x11
-        VK_V = 0x56
-
+        """Send Ctrl+V keystroke (for forwarding non-file paste)"""
         INPUT_KEYBOARD = 1
         KEYEVENTF_KEYUP = 0x0002
 
@@ -231,10 +234,9 @@ class KeyboardHook:
 
     @staticmethod
     def send_delete():
-        """模拟发送 Delete 键盘事件（放行时使用）"""
+        """Send Delete keystroke (for forwarding)"""
         INPUT_KEYBOARD = 1
         KEYEVENTF_KEYUP = 0x0002
-        VK_DELETE = 0x2E
 
         class KEYBDINPUT(ctypes.Structure):
             _fields_ = [
