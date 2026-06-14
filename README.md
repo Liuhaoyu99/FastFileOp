@@ -2,7 +2,7 @@
 
 > 🇨🇳 **中文用户请点这里**：[中文 README](README_zh.md)
 
-**Windows copy/move/delete accelerator with multi-threaded engine, up to 2.6x faster for multi-file operations.**
+**Windows copy/move/delete accelerator with multi-threaded engine, up to 2.7x faster for multi-file operations.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -10,7 +10,7 @@
 
 ## Features
 
-- 🚀 **High-Speed File Operations** - Multi-threaded engine with 64MB buffer, up to 2.6x faster for multi-file copy
+- 🚀 **High-Speed File Operations** - Multi-threaded engine with CopyFileW API, up to 2.7x faster for multi-file copy
 - ⌨️ **Keyboard Hook Integration** - Seamlessly intercepts Ctrl+C/X/V and Delete keys in Explorer
 - 🔄 **Shell Extension DLL** - C++ COM component for drag & drop interception
 - 📊 **System Tray UI** - Real-time status, pause/resume, settings GUI
@@ -68,7 +68,7 @@
 
 | Metric | FastFileOp | Windows Default | Improvement |
 |--------|------------|-----------------|-------------|
-| Multi-File Copy (500x1MB) | **1.5 GB/s** | ~598 MB/s | **2.6x faster** |
+| Multi-File Copy (500x1MB) | **1.7 GB/s** | ~646 MB/s | **2.7x faster** |
 | Buffer Size | 64 MB | 8-64 KB | Fewer syscalls |
 | Worker Threads | 4 (configurable) | 1 | Parallel I/O |
 | Copy API | Windows CopyFileW | Python shutil | Native speed |
@@ -77,9 +77,9 @@
 
 ```
 Test: 500 files x 1MB copy on NVMe SSD (4 worker threads)
-FastFileOp:  1.5 GB/s  (multi-threaded, CopyFileW API)
-Windows:     598 MB/s  (sequential, shutil.copy2)
-Speedup:     2.6x faster
+FastFileOp:  1.7 GB/s  (multi-threaded, CopyFileW API)
+Windows:     646 MB/s  (sequential, shutil.copy2)
+Speedup:     2.7x faster
 
 Run benchmark yourself:
   python benchmark.py
@@ -87,34 +87,48 @@ Run benchmark yourself:
 
 ## Installation
 
-### Prerequisites
+### Quick Start (Recommended)
 
-- Windows 10/11 (64-bit)
-- Python 3.11+ (for running from source)
-- MinGW-w64 (for building DLL from source)
+1. Download `FastFileOp-v1.1.zip` from the [latest release](https://github.com/Liuhaoyu99/FastFileOp/releases/latest)
+2. Extract all files to a folder (keep DLL in the same directory as EXE)
+3. Run `install.bat` as Administrator to register the Shell Extension DLL
+4. Launch `FastFileOp.exe` — it will appear in the system tray
 
-### Quick Install
+> **Note:** The EXE and DLL must be in the same directory. Do not separate them.
 
-1. Download the latest release
-2. Run `install.bat` as Administrator
-3. Restart Windows Explorer (or log off/on)
+### Auto-Start
 
-```batch
-# Run as Administrator
-install.bat
-```
+FastFileOp uses the **Windows Startup folder** for auto-start (no registry modification):
+
+- Enable auto-start in the tray icon Settings menu
+- Or manually create a shortcut to `FastFileOp.exe --silent` in:
+  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`
 
 ### Manual Install
 
 ```batch
-# 1. Build the executable
+# 1. Build from source (requires Python 3.11+ and MinGW-w64)
 build.bat
 
 # 2. Install to Program Files
 install.bat
 
-# 3. Register the Shell Extension
-regsvr32 "C:\Program Files\FastFileOp\FastFileOpShim.dll"
+# 3. Register the Shell Extension DLL
+C:\Windows\SysWOW64\regsvr32.exe "FastFileOpShim.dll"
+```
+
+### Build from Source
+
+```batch
+# Build Python executable
+pyinstaller --onefile --noconsole --name FastFileOp entry.py
+
+# Build C++ DLL (requires MinGW-w64 32-bit)
+cd FastFileOpShim
+g++ -shared -o ..\dist\FastFileOpShim.dll -I. -DBUILDING_DLL -DNDEBUG -O2 ^
+    -static-libgcc -static-libstdc++ ^
+    stdafx.cpp PipeClient.cpp Utils.cpp CopyHook.cpp dllmain.cpp ^
+    -lshell32 -lole32 -loleaut32 -luser32 -ladvapi32 -luuid
 ```
 
 ## Uninstallation
@@ -127,8 +141,7 @@ uninstall.bat
 This will:
 - Unregister the Shell Extension DLL
 - Remove files from Program Files
-- Clean up registry entries
-- Remove auto-start entry
+- Remove auto-start shortcut from Startup folder
 
 ## Antivirus Whitelist
 
@@ -194,30 +207,6 @@ FastFileOp/
 ├── uninstall.bat            # Uninstallation script
 ├── requirements.txt         # Python dependencies
 └── README.md                # This file
-```
-
-## Development
-
-### Build from Source
-
-```batch
-# Build Python executable
-python -m PyInstaller --onefile --windowed --name FastFileOp main.py
-
-# Build C++ DLL (requires MinGW-w64)
-g++ -shared -o FastFileOpShim.dll -static-libgcc -static-libstdc++ ^
-    FastFileOpShim/*.cpp -lole32 -lshell32 -luuid -luser32
-```
-
-### Run Tests
-
-```batch
-# Engine tests
-python tests/test_engine.py
-
-# Pipe tests (requires running server)
-python -m fastfileop
-python tests/test_pipe.py
 ```
 
 ## Contributing

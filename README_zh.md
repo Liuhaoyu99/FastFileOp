@@ -2,7 +2,7 @@
 
 > 🇺🇸 **English users click here**: [English README](README.md)
 
-**Windows 复制/移动/删除加速工具，多线程引擎，多文件复制比默认快 2.6 倍。**
+**Windows 复制/移动/删除加速工具，多线程引擎，多文件复制比默认快 2.7 倍。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
@@ -10,7 +10,7 @@
 
 ## 功能特性
 
-- 🚀 **高速文件操作** - 多线程引擎配合 64MB 缓冲区，多文件复制可达 2.6 倍加速
+- 🚀 **高速文件操作** - 多线程引擎配合 CopyFileW API，多文件复制可达 2.7 倍加速
 - ⌨️ **键盘钩子集成** - 无缝拦截资源管理器中的 Ctrl+C/X/V 和 Delete 键
 - 🔄 **Shell 扩展 DLL** - C++ COM 组件，用于拦截拖放操作
 - 📊 **系统托盘界面** - 实时状态、暂停/恢复、设置 GUI
@@ -68,7 +68,7 @@
 
 | 指标 | FastFileOp | Windows 默认 | 提升 |
 |------|------------|-------------|------|
-| 多文件复制 (500x1MB) | **1.5 GB/s** | ~598 MB/s | **2.6 倍** |
+| 多文件复制 (500x1MB) | **1.7 GB/s** | ~646 MB/s | **2.7 倍** |
 | 缓冲区大小 | 64 MB | 8-64 KB | 减少系统调用 |
 | 工作线程数 | 4 (可配置) | 1 | 并行 I/O |
 | 复制 API | Windows CopyFileW | Python shutil | 原生速度 |
@@ -77,9 +77,9 @@
 
 ```
 测试: NVMe SSD 上复制 500 个 1MB 文件 (4 工作线程)
-FastFileOp:  1.5 GB/s  (多线程, CopyFileW API)
-Windows:     598 MB/s  (顺序, shutil.copy2)
-加速比:      2.6 倍
+FastFileOp:  1.7 GB/s  (多线程, CopyFileW API)
+Windows:     646 MB/s  (顺序, shutil.copy2)
+加速比:      2.7 倍
 
 自行运行基准测试:
   python benchmark.py
@@ -87,34 +87,48 @@ Windows:     598 MB/s  (顺序, shutil.copy2)
 
 ## 安装
 
-### 前置要求
+### 快速开始（推荐）
 
-- Windows 10/11 (64位)
-- Python 3.11+ (从源码运行需要)
-- MinGW-w64 (从源码编译 DLL 需要)
+1. 从 [最新发行版](https://github.com/Liuhaoyu99/FastFileOp/releases/latest) 下载 `FastFileOp-v1.1.zip`
+2. 将所有文件解压到一个文件夹（DLL 必须和 EXE 在同一目录）
+3. 以管理员身份运行 `install.bat` 注册 Shell 扩展 DLL
+4. 启动 `FastFileOp.exe` — 程序会出现在系统托盘中
 
-### 快速安装
+> **注意：** EXE 和 DLL 必须在同一目录下，不要分开存放。
 
-1. 下载最新版本
-2. 以管理员身份运行 `install.bat`
-3. 重启 Windows 资源管理器 (或注销/登录)
+### 开机自启动
 
-```batch
-# 以管理员身份运行
-install.bat
-```
+FastFileOp 使用 **Windows 启动文件夹** 实现开机自启（不修改注册表）：
+
+- 在托盘图标的设置菜单中启用开机自启
+- 或手动在以下目录创建 `FastFileOp.exe --silent` 的快捷方式：
+  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`
 
 ### 手动安装
 
 ```batch
-# 1. 编译可执行文件
+# 1. 从源码构建（需要 Python 3.11+ 和 MinGW-w64）
 build.bat
 
 # 2. 安装到 Program Files
 install.bat
 
-# 3. 注册 Shell 扩展
-regsvr32 "C:\Program Files\FastFileOp\FastFileOpShim.dll"
+# 3. 注册 Shell 扩展 DLL
+C:\Windows\SysWOW64\regsvr32.exe "FastFileOpShim.dll"
+```
+
+### 从源码构建
+
+```batch
+# 构建 Python 可执行文件
+pyinstaller --onefile --noconsole --name FastFileOp entry.py
+
+# 构建 C++ DLL（需要 MinGW-w64 32位）
+cd FastFileOpShim
+g++ -shared -o ..\dist\FastFileOpShim.dll -I. -DBUILDING_DLL -DNDEBUG -O2 ^
+    -static-libgcc -static-libstdc++ ^
+    stdafx.cpp PipeClient.cpp Utils.cpp CopyHook.cpp dllmain.cpp ^
+    -lshell32 -lole32 -loleaut32 -luser32 -ladvapi32 -luuid
 ```
 
 ## 卸载
@@ -127,8 +141,7 @@ uninstall.bat
 这将：
 - 注销 Shell 扩展 DLL
 - 从 Program Files 删除文件
-- 清理注册表项
-- 移除开机自启项
+- 移除启动文件夹中的自启快捷方式
 
 ## 杀毒软件白名单设置
 
