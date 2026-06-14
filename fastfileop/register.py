@@ -86,9 +86,20 @@ def register_dll(dll_path: Path) -> bool:
         return False
 
     try:
+        # Determine correct regsvr32 path
+        # On 64-bit Windows, 32-bit DLLs must use SysWOW64\regsvr32.exe
+        import platform
+        if platform.machine().endswith('64'):
+            # 64-bit Windows - check if DLL is 32-bit
+            regsvr32 = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'SysWOW64', 'regsvr32.exe')
+        else:
+            regsvr32 = 'regsvr32.exe'
+
+        logger.info(f"Using regsvr32: {regsvr32} for DLL: {dll_path}")
+
         # Use regsvr32 to register the DLL
         result = subprocess.run(
-            ["regsvr32", "/s", str(dll_path)],
+            [regsvr32, "/s", str(dll_path)],
             capture_output=True,
             timeout=30,
         )
@@ -97,7 +108,13 @@ def register_dll(dll_path: Path) -> bool:
             logger.info(f"DLL registered successfully: {dll_path}")
             return True
         else:
+            stderr_out = result.stderr.decode('mbcs', errors='replace').strip()
+            stdout_out = result.stdout.decode('mbcs', errors='replace').strip()
             logger.error(f"DLL registration failed with code {result.returncode}")
+            if stderr_out:
+                logger.error(f"  stderr: {stderr_out}")
+            if stdout_out:
+                logger.error(f"  stdout: {stdout_out}")
             return False
 
     except subprocess.TimeoutExpired:
@@ -124,8 +141,15 @@ def unregister_dll(dll_path: Path) -> bool:
         return False
 
     try:
+        # Determine correct regsvr32 path (same as register)
+        import platform
+        if platform.machine().endswith('64'):
+            regsvr32 = os.path.join(os.environ.get('WINDIR', r'C:\Windows'), 'SysWOW64', 'regsvr32.exe')
+        else:
+            regsvr32 = 'regsvr32.exe'
+
         result = subprocess.run(
-            ["regsvr32", "/s", "/u", str(dll_path)],
+            [regsvr32, "/s", "/u", str(dll_path)],
             capture_output=True,
             timeout=30,
         )
