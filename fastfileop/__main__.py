@@ -151,10 +151,21 @@ class FastFileOpApp:
         """Quit application"""
         logger.info("Shutting down FastFileOp...")
         self._running = False
-        self.hook.stop()
-        self.pipe_server.stop()
-        # Note: tray.stop() is already called by the tray menu callback
-        # so we don't need to call it here
+
+        # Stop components
+        try:
+            self.hook.stop()
+        except Exception as e:
+            logger.error(f"Error stopping hook: {e}")
+
+        try:
+            self.pipe_server.stop()
+        except Exception as e:
+            logger.error(f"Error stopping pipe server: {e}")
+
+        # Force exit after cleanup
+        import os
+        os._exit(0)
 
     def _create_engine(self) -> FileEngine:
         """Create file engine with current config"""
