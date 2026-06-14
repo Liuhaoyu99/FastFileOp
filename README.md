@@ -1,6 +1,8 @@
 # FastFileOp
 
-**Replace Windows default copy, move & delete with a high-speed multi-threaded engine. 2.5–4× faster.**
+> 🇨🇳 **中文用户请点这里**：[中文 README](README_zh.md)
+
+**Windows 复制/移动/删除加速工具，多线程引擎，比默认快 2.5-4 倍。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)

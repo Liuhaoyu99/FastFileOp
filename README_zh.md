@@ -1,6 +1,8 @@
 # FastFileOp
 
-**替换 Windows 默认的复制、移动、删除操作，使用高速多线程引擎。速度提升 2.5-4 倍。**
+> 🇺🇸 **English users click here**: [English README](README.md)
+
+**Windows 复制/移动/删除加速工具，多线程引擎，比默认快 2.5-4 倍。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
