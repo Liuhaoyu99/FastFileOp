@@ -23,6 +23,7 @@ from .hook import KeyboardHook
 from .logger import configure_root_logger, set_debug_mode
 from .pipe_server import PipeServer
 from .progress import ProgressWindow, ProgressCallback
+from .register import ensure_dll_registered, is_dll_registered, register_dll, get_dll_path, run_as_admin
 from .shell import ShellHelper
 from .settings import SettingsWindow
 from .tray import TrayIcon
@@ -37,6 +38,16 @@ def parse_args():
         "--silent",
         action="store_true",
         help="Silent mode - start minimized to tray (for auto-start)",
+    )
+    parser.add_argument(
+        "--register-dll",
+        action="store_true",
+        help="Register the shell extension DLL and exit",
+    )
+    parser.add_argument(
+        "--unregister-dll",
+        action="store_true",
+        help="Unregister the shell extension DLL and exit",
     )
     return parser.parse_args()
 
@@ -369,6 +380,23 @@ class FastFileOpApp:
                     pass
                 sys.exit(1)
 
+            # Check and attempt DLL registration
+            dll_registered, dll_msg = ensure_dll_registered()
+            self.tray.set_dll_status(dll_registered)
+
+            if not dll_registered:
+                logger.warning(f"DLL registration status: {dll_msg}")
+                # Show notification after tray starts
+                def show_dll_notification(icon):
+                    time.sleep(2)
+                    icon.notify(
+                        "Shell extension not registered. Run as administrator to register.",
+                        "FastFileOp"
+                    )
+                threading.Thread(target=show_dll_notification, args=(self.tray._icon,), daemon=True).start()
+            else:
+                logger.info(f"DLL registration: {dll_msg}")
+
             # Ensure auto-start is registered (first run)
             first_run = self.config_manager.ensure_auto_start_registered()
             if first_run:
@@ -422,6 +450,33 @@ class FastFileOpApp:
 def main():
     """Main entry point"""
     args = parse_args()
+
+    # Handle DLL registration commands
+    if args.register_dll:
+        dll_path = get_dll_path()
+        if dll_path is None:
+            print("Error: FastFileOpShim.dll not found", file=sys.stderr)
+            sys.exit(1)
+        if register_dll(dll_path):
+            print("Shell extension registered successfully.")
+            sys.exit(0)
+        else:
+            print("Error: Failed to register shell extension.", file=sys.stderr)
+            sys.exit(1)
+
+    if args.unregister_dll:
+        dll_path = get_dll_path()
+        if dll_path is None:
+            print("Error: FastFileOpShim.dll not found", file=sys.stderr)
+            sys.exit(1)
+        from .register import unregister_dll
+        if unregister_dll(dll_path):
+            print("Shell extension unregistered successfully.")
+            sys.exit(0)
+        else:
+            print("Error: Failed to unregister shell extension.", file=sys.stderr)
+            sys.exit(1)
+
     app = FastFileOpApp(silent=args.silent)
     app.run()
 

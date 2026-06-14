@@ -7,6 +7,7 @@ Supports instability status and manual resume.
 
 import logging
 import threading
+import ctypes
 from typing import Callable, Optional
 
 import pystray
@@ -104,6 +105,12 @@ class TrayIcon:
         self._icon: Optional[pystray.Icon] = None
         self._paused = config_manager.config.paused
         self._instability = False
+        self._dll_registered = True  # Assume registered initially
+
+    def set_dll_status(self, registered: bool):
+        """Set DLL registration status for menu display"""
+        self._dll_registered = registered
+        self._refresh_icon()
 
     def _get_menu(self) -> pystray.Menu:
         """Create right-click menu"""
@@ -140,6 +147,19 @@ class TrayIcon:
         status_text = "Paused" if self._paused else "Active"
         pause_label = "Resume" if self._paused else "Pause"
 
+        # DLL status item
+        if self._dll_registered:
+            dll_item = pystray.MenuItem(
+                "DLL: Registered",
+                None,
+                enabled=False,
+            )
+        else:
+            dll_item = pystray.MenuItem(
+                "Register Shell Extension...",
+                self._register_dll,
+            )
+
         return pystray.Menu(
             pystray.MenuItem(
                 f"Status: {status_text}",
@@ -155,6 +175,8 @@ class TrayIcon:
                 "Settings...",
                 self._open_settings,
             ),
+            pystray.Menu.SEPARATOR,
+            dll_item,
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 "Exit",
@@ -186,6 +208,40 @@ class TrayIcon:
             self.on_settings()
         except Exception as e:
             logger.error(f"Failed to open settings: {e}")
+
+    def _register_dll(self, icon, item):
+        """Register shell extension DLL"""
+        logger.info("User requested DLL registration from tray menu")
+
+        # Show confirmation dialog
+        msg = (
+            "To register the shell extension, FastFileOp needs to run with administrator privileges.\n\n"
+            "Click OK to restart as administrator and register the DLL."
+        )
+
+        result = ctypes.windll.user32.MessageBoxW(
+            0,
+            msg,
+            "FastFileOp - Register Shell Extension",
+            0x40 | 0x01  # MB_ICONINFORMATION | MB_OKCANCEL
+        )
+
+        if result == 1:  # IDOK
+            # Import here to avoid circular import
+            from .register import run_as_admin
+            if run_as_admin(["--register-dll"]):
+                logger.info("Admin elevation requested for DLL registration")
+                # Show notification
+                self.show_notification(
+                    "FastFileOp",
+                    "Restarting with administrator privileges to register DLL..."
+                )
+            else:
+                logger.error("Failed to request admin elevation")
+                self.show_notification(
+                    "FastFileOp - Error",
+                    "Failed to request administrator privileges."
+                )
 
     def _quit(self, icon, item):
         """Quit application"""
