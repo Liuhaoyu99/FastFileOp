@@ -285,26 +285,48 @@ class FileEngine:
     def _secure_delete(self, filepath: str, passes: int = 3) -> None:
         """Securely delete a file by overwriting before deletion"""
         size = os.path.getsize(filepath)
+        # Use a fixed, small reusable buffer to avoid allocating large
+        # temporary bytes objects (avoids large memory spikes when buffer_size
+        # is large, e.g. default 64MB). We'll write in chunks of up to 1MB.
+        chunk_pool_size = min(1024 * 1024, max(4096, self.buffer_size))
 
         for pass_num in range(passes):
             if not self._wait_if_paused():
                 return
 
-            with open(filepath, "wb") as f:
-                remaining = size
-                while remaining > 0:
+            # Prepare write pattern for this pass. Reuse the same buffer object.
+            if pass_num % 3 == 0:
+                pattern_chunk = b"\x00" * chunk_pool_size
+            elif pass_num % 3 == 1:
+                pattern_chunk = b"\xFF" * chunk_pool_size
+            else:
+                # For random data, create a buffer and refill as needed to
+                # avoid holding a huge bytes object for the whole file.
+                pattern_chunk = None
+
+            written = 0
+            with open(filepath, "r+b") as f:
+                f.seek(0)
+                while written < size:
                     if self._check_cancelled():
                         return
-                    chunk_size = min(remaining, self.buffer_size)
-                    if pass_num % 3 == 0:
-                        f.write(b"\x00" * chunk_size)
-                    elif pass_num % 3 == 1:
-                        f.write(b"\xFF" * chunk_size)
-                    else:
-                        f.write(os.urandom(chunk_size))
-                    remaining -= chunk_size
+                    if not self._wait_if_paused():
+                        return
 
-            with open(filepath, "rb+") as f:
+                    to_write = min(chunk_pool_size, size - written)
+                    if pattern_chunk is not None:
+                        f.write(pattern_chunk[:to_write])
+                    else:
+                        # Fill a small buffer with random bytes and write
+                        f.write(os.urandom(to_write))
+
+                    written += to_write
+                    # Optionally flush intermittently to avoid large write buffers
+                    if written % (8 * chunk_pool_size) == 0:
+                        f.flush()
+                        os.fsync(f.fileno())
+
+                # Ensure all data persisted for this pass
                 f.flush()
                 os.fsync(f.fileno())
 

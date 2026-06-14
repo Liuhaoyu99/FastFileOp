@@ -19,6 +19,10 @@ from fastfileop.config import ConfigManager
 from fastfileop.engine import FileEngine, OpState
 
 
+import platform
+
+
+@unittest.skipUnless(os.name == 'nt', 'Windows-only tests')
 class TestFileEngine(unittest.TestCase):
     """Test file operation engine"""
 
@@ -233,6 +237,7 @@ class TestConfigManager(unittest.TestCase):
         self.assertFalse(config.is_hooking_enabled())
 
 
+@unittest.skipUnless(os.name == 'nt', 'Windows-only tests')
 class TestPipeServer(unittest.TestCase):
     """Test named pipe server"""
 
@@ -266,6 +271,7 @@ class TestPipeServer(unittest.TestCase):
         self.assertFalse(server.is_running)
 
 
+@unittest.skipUnless(os.name == 'nt', 'Windows-only tests')
 class TestClipboardMonitor(unittest.TestCase):
     """Test clipboard monitoring"""
 
@@ -282,6 +288,7 @@ class TestClipboardMonitor(unittest.TestCase):
         self.assertIsNotNone(monitor)
 
 
+@unittest.skipUnless(os.name == 'nt', 'Windows-only tests')
 class TestIntegration(unittest.TestCase):
     """Integration tests"""
 

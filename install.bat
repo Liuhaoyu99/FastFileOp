@@ -24,23 +24,41 @@ if %errorlevel% neq 0 (
 set "SCRIPT_DIR=%~dp0"
 set "INSTALL_DIR=%ProgramFiles%\FastFileOp"
 
+:: Support running this script either from project root or from inside the dist folder
+:: If the exe is next to the script (e.g. running from dist), use that; otherwise use dist\FastFileOp.exe
+set "SRC_EXE=%SCRIPT_DIR%dist\FastFileOp.exe"
+set "SRC_DLL=%SCRIPT_DIR%dist\FastFileOpShim.dll"
+if exist "%SCRIPT_DIR%FastFileOp.exe" (
+    set "SRC_EXE=%SCRIPT_DIR%FastFileOp.exe"
+)
+if exist "%SCRIPT_DIR%FastFileOpShim.dll" (
+    set "SRC_DLL=%SCRIPT_DIR%FastFileOpShim.dll"
+)
+
 echo Installing to: %INSTALL_DIR%
 echo.
+
+:: Prepare install log
+set "INSTALL_LOG=%TEMP%\fastfileop_install.log"
+echo ===== FastFileOp install started: %DATE% %TIME% =====>> "%INSTALL_LOG%"
+echo Installing to: %INSTALL_DIR% >> "%INSTALL_LOG%"
 
 :: ============================================================
 :: Step 1: Check source files
 :: ============================================================
 echo [Step 1/5] Checking source files...
 
-if not exist "%SCRIPT_DIR%dist\FastFileOp.exe" (
-    echo ERROR: dist\FastFileOp.exe not found!
+if not exist "%SRC_EXE%" (
+    echo ERROR: %SRC_EXE% not found!
     echo Please run build.bat first.
+    echo ERROR: %SRC_EXE% not found! >> "%INSTALL_LOG%"
     pause
     exit /b 1
 )
 
-if not exist "%SCRIPT_DIR%dist\FastFileOpShim.dll" (
-    echo WARNING: dist\FastFileOpShim.dll not found, skipping shell extension.
+if not exist "%SRC_DLL%" (
+    echo WARNING: %SRC_DLL% not found, skipping shell extension.
+    echo WARNING: %SRC_DLL% not found, skipping shell extension. >> "%INSTALL_LOG%"
     set "SKIP_DLL=1"
 )
 
@@ -69,7 +87,7 @@ echo.
 :: ============================================================
 echo [Step 3/5] Copying files...
 
-copy /Y "%SCRIPT_DIR%dist\FastFileOp.exe" "%INSTALL_DIR%\" >nul
+copy /Y "%SRC_EXE%" "%INSTALL_DIR%\" >nul
 if %errorlevel% neq 0 (
     echo ERROR: Failed to copy FastFileOp.exe!
     pause
@@ -77,7 +95,7 @@ if %errorlevel% neq 0 (
 )
 
 if not defined SKIP_DLL (
-    copy /Y "%SCRIPT_DIR%dist\FastFileOpShim.dll" "%INSTALL_DIR%\" >nul
+    copy /Y "%SRC_DLL%" "%INSTALL_DIR%\" >nul
     if %errorlevel% neq 0 (
         echo ERROR: Failed to copy FastFileOpShim.dll!
         pause
@@ -91,16 +109,56 @@ echo.
 
 :: ============================================================
 :: Step 4: Register shell extension
+:: Try both 64-bit and 32-bit regsvr32, then fall back to the shim installer
 :: ============================================================
 echo [Step 4/5] Registering shell extension...
 
 if not defined SKIP_DLL (
-    %WINDIR%\SysWOW64\regsvr32.exe /s "%INSTALL_DIR%\FastFileOpShim.dll"
-    if %errorlevel% neq 0 (
-        echo WARNING: Failed to register shell extension.
-        echo The application will still work, but drag-and-drop interception may not function.
+    set "DLL_PATH=%INSTALL_DIR%\FastFileOpShim.dll"
+
+    echo Attempting to register (System32 regsvr32 - 64-bit)...
+    "%WINDIR%\System32\regsvr32.exe" /s "%DLL_PATH%" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo Shell extension registered (64-bit regsvr32).
+        echo Shell extension registered (64-bit regsvr32). >> "%INSTALL_LOG%"
     ) else (
-        echo Shell extension registered.
+        echo 64-bit registration failed, trying 32-bit regsvr32 (SysWOW64)...
+        echo 64-bit registration failed -> trying SysWOW64 regsvr32. >> "%INSTALL_LOG%"
+        "%WINDIR%\SysWOW64\regsvr32.exe" /s "%DLL_PATH%" >nul 2>&1
+        if %errorlevel% equ 0 (
+            echo Shell extension registered (32-bit regsvr32).
+            echo Shell extension registered (32-bit regsvr32). >> "%INSTALL_LOG%"
+        ) else (
+            echo Both regsvr32 attempts failed.
+            echo Both regsvr32 attempts failed. >> "%INSTALL_LOG%"
+            echo Trying bundled FastFileOpShim installer as a fallback...
+            echo Trying bundled FastFileOpShim installer as a fallback... >> "%INSTALL_LOG%"
+            if exist "%INSTALL_DIR%\install.bat" (
+                call "%INSTALL_DIR%\install.bat" >> "%INSTALL_LOG%" 2>&1
+            ) else if exist "%SCRIPT_DIR%FastFileOpShim\install.bat" (
+                call "%SCRIPT_DIR%FastFileOpShim\install.bat" >> "%INSTALL_LOG%" 2>&1
+            ) else (
+                echo No bundled shim installer found to try.
+                echo No bundled shim installer found to try. >> "%INSTALL_LOG%"
+            )
+
+            :: After fallback attempt, try regsvr32 once more (best-effort)
+            "%WINDIR%\System32\regsvr32.exe" /s "%DLL_PATH%" >> "%INSTALL_LOG%" 2>&1
+            if %errorlevel% equ 0 (
+                echo Shell extension registered after fallback (64-bit regsvr32).
+                echo Shell extension registered after fallback (64-bit regsvr32). >> "%INSTALL_LOG%"
+            ) else (
+                "%WINDIR%\SysWOW64\regsvr32.exe" /s "%DLL_PATH%" >> "%INSTALL_LOG%" 2>&1
+                if %errorlevel% equ 0 (
+                    echo Shell extension registered after fallback (32-bit regsvr32).
+                    echo Shell extension registered after fallback (32-bit regsvr32). >> "%INSTALL_LOG%"
+                ) else (
+                    echo WARNING: Failed to register shell extension.
+                    echo The application will still work, but drag-and-drop interception may not function.
+                    echo WARNING: Failed to register shell extension. >> "%INSTALL_LOG%"
+                )
+            )
+        )
     )
 ) else (
     echo Skipping shell extension registration.

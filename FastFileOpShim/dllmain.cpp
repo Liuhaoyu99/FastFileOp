@@ -3,6 +3,8 @@
 #include "stdafx.h"
 #include "CopyHook.h"
 #include "DropTarget.h"
+#include "ContextMenu.h"
+#include "ExplorerCommand.h"
 
 HINSTANCE g_hInst = NULL;
 DWORD g_dwRegister = 0;
@@ -160,6 +162,28 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv)
         return hr;
     }
 
+    if (rclsid == CLSID_FastFileOpContextMenu)
+    {
+        CComObject<CFastFileOpContextMenu>* pObject = NULL;
+        HRESULT hr = CComObject<CFastFileOpContextMenu>::CreateInstance(&pObject);
+        if (FAILED(hr) || !pObject) return E_OUTOFMEMORY;
+
+        hr = pObject->QueryInterface(riid, ppv);
+        pObject->Release();
+        return hr;
+    }
+
+    if (rclsid == CLSID_FastFileOpDeleteCommand)
+    {
+        CComObject<CFastFileOpDeleteCommand>* pObject = NULL;
+        HRESULT hr = CComObject<CFastFileOpDeleteCommand>::CreateInstance(&pObject);
+        if (FAILED(hr) || !pObject) return E_OUTOFMEMORY;
+
+        hr = pObject->QueryInterface(riid, ppv);
+        pObject->Release();
+        return hr;
+    }
+
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
@@ -187,6 +211,22 @@ STDAPI DllRegisterServer()
     RegisterShellExHandler(CLSID_FastFileOpDropTarget,
         L"Folder\\ShellEx\\DragDropHandlers", L"FastFileOp");
 
+    // ── ContextMenu ────────────────────────────────────────────
+    RegisterCLSID(CLSID_FastFileOpContextMenu, L"FastFileOp ContextMenu", szModulePath);
+    RegisterShellExHandler(CLSID_FastFileOpContextMenu,
+        L"*\\ShellEx\\ContextMenuHandlers", L"FastFileOp");
+    RegisterShellExHandler(CLSID_FastFileOpContextMenu,
+        L"Directory\\ShellEx\\ContextMenuHandlers", L"FastFileOp");
+    RegisterShellExHandler(CLSID_FastFileOpContextMenu,
+        L"Folder\\ShellEx\\ContextMenuHandlers", L"FastFileOp");
+
+    // ── DeleteCommand ──────────────────────────────────────────
+    RegisterCLSID(CLSID_FastFileOpDeleteCommand, L"FastFileOp DeleteCommand", szModulePath);
+    RegisterShellExHandler(CLSID_FastFileOpDeleteCommand,
+        L"*\\ShellEx\\ContextMenuHandlers", L"FastFileOpDelete");
+    RegisterShellExHandler(CLSID_FastFileOpDeleteCommand,
+        L"Directory\\ShellEx\\ContextMenuHandlers", L"FastFileOpDelete");
+
     // Notify Shell
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
 
@@ -204,6 +244,17 @@ STDAPI DllUnregisterServer()
     UnregisterShellExHandler(L"Directory\\ShellEx\\DragDropHandlers", L"FastFileOp");
     UnregisterShellExHandler(L"Folder\\ShellEx\\DragDropHandlers", L"FastFileOp");
     UnregisterCLSID(CLSID_FastFileOpDropTarget);
+
+    // ── ContextMenu ────────────────────────────────────────────
+    UnregisterShellExHandler(L"*\\ShellEx\\ContextMenuHandlers", L"FastFileOp");
+    UnregisterShellExHandler(L"Directory\\ShellEx\\ContextMenuHandlers", L"FastFileOp");
+    UnregisterShellExHandler(L"Folder\\ShellEx\\ContextMenuHandlers", L"FastFileOp");
+    UnregisterCLSID(CLSID_FastFileOpContextMenu);
+
+    // ── DeleteCommand ──────────────────────────────────────────
+    UnregisterShellExHandler(L"*\\ShellEx\\ContextMenuHandlers", L"FastFileOpDelete");
+    UnregisterShellExHandler(L"Directory\\ShellEx\\ContextMenuHandlers", L"FastFileOpDelete");
+    UnregisterCLSID(CLSID_FastFileOpDeleteCommand);
 
     // Notify Shell
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);

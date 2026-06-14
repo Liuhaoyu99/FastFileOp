@@ -138,7 +138,7 @@ echo.
 echo Building executable with PyInstaller...
 pyinstaller --onefile --noconsole --name FastFileOp ^
     --distpath dist --workpath build ^
-    --clean main.py
+    --clean entry.py
 
 if %errorlevel% neq 0 (
     echo.
