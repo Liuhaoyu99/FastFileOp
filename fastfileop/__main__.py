@@ -18,6 +18,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox
 
+# Fix relative imports for PyInstaller frozen app
+if __name__ == '__main__' and __package__ is None:
+    __package__ = 'fastfileop'
+    # Ensure parent package is loaded for relative imports
+    import fastfileop  # noqa: F401
+
 from .clipboard import ClipboardMonitor
 from .config import ConfigManager
 from .engine import FileEngine, OpState
