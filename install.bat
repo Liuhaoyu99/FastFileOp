@@ -101,6 +101,12 @@ if not defined SKIP_DLL (
         pause
         exit /b 1
     )
+    if exist "%SCRIPT_DIR%dist\libgcc_s_dw2-1.dll" (
+        copy /Y "%SCRIPT_DIR%dist\libgcc_s_dw2-1.dll" "%INSTALL_DIR%\" >nul
+    )
+    if exist "%SCRIPT_DIR%libgcc_s_dw2-1.dll" (
+        copy /Y "%SCRIPT_DIR%libgcc_s_dw2-1.dll" "%INSTALL_DIR%\" >nul
+    )
     if exist "%SCRIPT_DIR%dist\libwinpthread-1.dll" (
         copy /Y "%SCRIPT_DIR%dist\libwinpthread-1.dll" "%INSTALL_DIR%\" >nul
     )
@@ -120,60 +126,28 @@ if exist "%SCRIPT_DIR%benchmark.png" copy /Y "%SCRIPT_DIR%benchmark.png" "%INSTA
 
 :: ============================================================
 :: Step 4: Register shell extension
-:: Try both 64-bit and 32-bit regsvr32, then fall back to the shim installer
 :: ============================================================
 echo [Step 4/5] Registering shell extension...
 
-if not defined SKIP_DLL (
-    set "DLL_PATH=%INSTALL_DIR%\FastFileOpShim.dll"
-
-    echo Attempting to register (System32 regsvr32 - 64-bit)...
-    "%WINDIR%\System32\regsvr32.exe" /s "%DLL_PATH%" >nul 2>&1
-    if %errorlevel% equ 0 (
-        echo Shell extension registered (64-bit regsvr32).
-        echo Shell extension registered (64-bit regsvr32). >> "%INSTALL_LOG%"
-    ) else (
-        echo 64-bit registration failed, trying 32-bit regsvr32 (SysWOW64)...
-        echo 64-bit registration failed -> trying SysWOW64 regsvr32. >> "%INSTALL_LOG%"
-        "%WINDIR%\SysWOW64\regsvr32.exe" /s "%DLL_PATH%" >nul 2>&1
-        if %errorlevel% equ 0 (
-            echo Shell extension registered (32-bit regsvr32).
-            echo Shell extension registered (32-bit regsvr32). >> "%INSTALL_LOG%"
-        ) else (
-            echo Both regsvr32 attempts failed.
-            echo Both regsvr32 attempts failed. >> "%INSTALL_LOG%"
-            echo Trying bundled FastFileOpShim installer as a fallback...
-            echo Trying bundled FastFileOpShim installer as a fallback... >> "%INSTALL_LOG%"
-            if exist "%INSTALL_DIR%\install.bat" (
-                call "%INSTALL_DIR%\install.bat" >> "%INSTALL_LOG%" 2>&1
-            ) else if exist "%SCRIPT_DIR%FastFileOpShim\install.bat" (
-                call "%SCRIPT_DIR%FastFileOpShim\install.bat" >> "%INSTALL_LOG%" 2>&1
-            ) else (
-                echo No bundled shim installer found to try.
-                echo No bundled shim installer found to try. >> "%INSTALL_LOG%"
-            )
-
-            :: After fallback attempt, try regsvr32 once more (best-effort)
-            "%WINDIR%\System32\regsvr32.exe" /s "%DLL_PATH%" >> "%INSTALL_LOG%" 2>&1
-            if %errorlevel% equ 0 (
-                echo Shell extension registered after fallback (64-bit regsvr32).
-                echo Shell extension registered after fallback (64-bit regsvr32). >> "%INSTALL_LOG%"
-            ) else (
-                "%WINDIR%\SysWOW64\regsvr32.exe" /s "%DLL_PATH%" >> "%INSTALL_LOG%" 2>&1
-                if %errorlevel% equ 0 (
-                    echo Shell extension registered after fallback (32-bit regsvr32).
-                    echo Shell extension registered after fallback (32-bit regsvr32). >> "%INSTALL_LOG%"
-                ) else (
-                    echo WARNING: Failed to register shell extension.
-                    echo The application will still work, but drag-and-drop interception may not function.
-                    echo WARNING: Failed to register shell extension. >> "%INSTALL_LOG%"
-                )
-            )
-        )
-    )
-) else (
+if defined SKIP_DLL (
     echo Skipping shell extension registration.
+    goto :step5
 )
+
+set "DLL_DIR=%INSTALL_DIR%"
+set "DLL_PATH=%DLL_DIR%\FastFileOpShim.dll"
+
+python -c "import ctypes, os, sys; os.environ['PATH'] = r'%DLL_DIR%' + os.pathsep + os.environ['PATH']; dll = ctypes.WinDLL(r'%DLL_PATH%'); r = getattr(dll, 'DllRegisterServer@0')(); sys.exit(r)"
+if %errorlevel% equ 0 (
+    echo Shell extension registered.
+    echo Shell extension registered. >> "%INSTALL_LOG%"
+) else (
+    echo WARNING: Failed to register shell extension. >> "%INSTALL_LOG%"
+    echo WARNING: Failed to register shell extension.
+    echo The application will still work, but drag-and-drop interception may not function.
+)
+
+:step5
 
 :: ============================================================
 :: Step 5: Register auto-start and launch

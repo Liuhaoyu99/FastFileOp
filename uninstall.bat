@@ -39,7 +39,6 @@ if %errorlevel% equ 0 (
     echo No running FastFileOp process found.
 )
 
-:: Wait for process to fully terminate
 timeout /t 2 /nobreak >nul
 
 :: ============================================================
@@ -47,12 +46,17 @@ timeout /t 2 /nobreak >nul
 :: ============================================================
 echo [Step 2/4] Unregistering shell extension...
 
-if exist "%INSTALL_DIR%\FastFileOpShim.dll" (
-    regsvr32 /u /s "%INSTALL_DIR%\FastFileOpShim.dll"
-    echo Shell extension unregistered.
+set "DLL_DIR=%INSTALL_DIR%"
+set "DLL_PATH=%DLL_DIR%\FastFileOpShim.dll"
+if exist "%DLL_PATH%" (
+    python -c "import ctypes, os, sys; os.environ['PATH'] = r'%DLL_DIR%' + os.pathsep + os.environ['PATH']; dll = ctypes.WinDLL(r'%DLL_PATH%'); r = getattr(dll, 'DllUnregisterServer@0')(); sys.exit(r)"
+    if %errorlevel% equ 0 (
+        echo Shell extension unregistered.
+    ) else (
+        echo WARNING: Failed to unregister shell extension.
+    )
 )
 
-:: Clean up registry entries (in case regsvr32 missed some)
 reg delete "HKCR\Directory\ShellEx\CopyHookHandlers\FastFileOp" /f >nul 2>&1
 reg delete "HKCR\Folder\ShellEx\CopyHookHandlers\FastFileOp" /f >nul 2>&1
 reg delete "HKCR\*\ShellEx\ContextMenuHandlers\FastFileOp" /f >nul 2>&1
@@ -103,8 +107,18 @@ echo ============================================================
 echo.
 echo FastFileOp has been removed from your system.
 echo.
-echo Note: User data in %APPDATA%\FastFileOp has been preserved.
-echo Delete manually if desired.
+echo User config in %%APPDATA%%\FastFileOp has been preserved.
+echo To remove it too, run:
+echo     rmdir /s /q "%APPDATA%\FastFileOp"
 echo.
+choice /c YN /m "Delete user config now"
+if %errorlevel% equ 1 (
+    if exist "%APPDATA%\FastFileOp" (
+        rmdir /s /q "%APPDATA%\FastFileOp"
+        echo User config deleted.
+    ) else (
+        echo No user config found.
+    )
+)
 
 pause
