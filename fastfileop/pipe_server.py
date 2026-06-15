@@ -158,6 +158,11 @@ class PipeServer:
         self._threads.clear()
         logger.info("Named pipe server stopped")
 
+    @property
+    def is_running(self) -> bool:
+        """Check if pipe server is running"""
+        return self._running
+
     def is_stable(self) -> bool:
         """Check if pipe server is stable"""
         return self._watchdog.is_stable()
@@ -241,6 +246,9 @@ class PipeServer:
         try:
             # Read request - win32file.ReadFile returns (error_code, data) for message mode
             error_code, data = win32file.ReadFile(pipe_handle, BUFFER_SIZE)
+            while error_code == 234:  # ERROR_MORE_DATA
+                _, more_data = win32file.ReadFile(pipe_handle, BUFFER_SIZE)
+                data += more_data
 
             request = data.decode("utf-8").strip()
             if not request:
@@ -283,6 +291,10 @@ class PipeServer:
             # Handle ping
             if action == "ping":
                 return json.dumps({"status": "pong"})
+
+            # Handle status
+            if action == "status":
+                return json.dumps({"status": "ok"})
 
             # Validate request
             if not action:

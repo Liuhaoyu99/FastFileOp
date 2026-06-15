@@ -1,7 +1,7 @@
 """FastFileOp - Configuration Management Module
 
 Handles loading, saving, and managing application configuration.
-Config file stored at %APPDATA%\FastFileOp\config.json
+Config file stored at %APPDATA%/FastFileOp/config.json
 """
 
 import json
@@ -13,9 +13,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Paths
-APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "FastFileOp")
-CONFIG_FILE = os.path.join(APP_DATA_DIR, "config.json")
+# Paths (computed at runtime, not import time, to respect APPDATA changes in tests)
+def _get_app_data_dir() -> str:
+    return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "FastFileOp")
+
+def _get_config_file() -> str:
+    return os.path.join(_get_app_data_dir(), "config.json")
 
 
 @dataclass
@@ -63,8 +66,9 @@ class ConfigManager:
     def load(self) -> AppConfig:
         """Load configuration from file"""
         try:
-            if os.path.exists(CONFIG_FILE):
-                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config_file = _get_config_file()
+            if os.path.exists(config_file):
+                with open(config_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
                 # Update only known fields
@@ -72,7 +76,7 @@ class ConfigManager:
                     if hasattr(self._config, key):
                         setattr(self._config, key, value)
 
-                logger.info(f"Configuration loaded from {CONFIG_FILE}")
+                logger.info(f"Configuration loaded from {config_file}")
             else:
                 logger.info("Config file not found, using defaults")
                 self.save()
@@ -84,10 +88,11 @@ class ConfigManager:
     def save(self) -> None:
         """Save configuration to file"""
         try:
-            os.makedirs(APP_DATA_DIR, exist_ok=True)
-            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            config_file = _get_config_file()
+            os.makedirs(_get_app_data_dir(), exist_ok=True)
+            with open(config_file, "w", encoding="utf-8") as f:
                 json.dump(asdict(self._config), f, indent=2, ensure_ascii=False)
-            logger.info(f"Configuration saved to {CONFIG_FILE}")
+            logger.info(f"Configuration saved to {config_file}")
         except Exception as e:
             logger.error(f"Failed to save config: {e}")
 

@@ -1,7 +1,7 @@
 """FastFileOp - Logging Module
 
 Configures logging with daily rotation, keeping last 7 days.
-Log files stored in %APPDATA%\FastFileOp\logs\
+Log files stored at %APPDATA%/FastFileOp/logs/
 """
 
 import logging
@@ -11,9 +11,10 @@ from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
 
-# Paths
-APP_DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "FastFileOp")
-LOG_DIR = os.path.join(APP_DATA_DIR, "logs")
+# Paths (computed at runtime)
+def _get_log_dir() -> str:
+    app_data = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "FastFileOp")
+    return os.path.join(app_data, "logs")
 
 # Module-level logger cache
 _loggers: dict = {}
@@ -36,7 +37,8 @@ def configure_root_logger(debug: bool = False) -> None:
     _root_configured = True
 
     # Ensure log directory exists
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_dir = _get_log_dir()
+    os.makedirs(log_dir, exist_ok=True)
 
     # Get root logger
     root_logger = logging.getLogger()
@@ -46,7 +48,7 @@ def configure_root_logger(debug: bool = False) -> None:
     root_logger.handlers.clear()
 
     # File handler - daily rotation, keep 7 days
-    log_file = os.path.join(LOG_DIR, "fastfileop.log")
+    log_file = os.path.join(log_dir, "fastfileop.log")
     file_handler = TimedRotatingFileHandler(
         log_file,
         when="midnight",

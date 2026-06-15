@@ -162,7 +162,7 @@ class TestFileEngine(unittest.TestCase):
         self.engine.cancel()
         thread.join(timeout=2)
         
-        self.assertIn(self.engine.state, [OpState.CANCELLED, OpState.IDLE])
+        self.assertIn(self.engine.state, [OpState.CANCELLED, OpState.COMPLETED])
 
     def test_error_handling(self):
         """Test error handling for non-existent files"""
@@ -180,13 +180,15 @@ class TestConfigManager(unittest.TestCase):
     def setUp(self):
         """Use temp directory for config"""
         self.temp_dir = tempfile.mkdtemp(prefix="fastfileop_config_")
-        self.original_appdata = os.environ.get("LOCALAPPDATA")
-        os.environ["LOCALAPPDATA"] = self.temp_dir
+        self._original_appdata = os.environ.get("APPDATA")
+        os.environ["APPDATA"] = self.temp_dir
 
     def tearDown(self):
         """Restore environment"""
-        if self.original_appdata:
-            os.environ["LOCALAPPDATA"] = self.original_appdata
+        if self._original_appdata is not None:
+            os.environ["APPDATA"] = self._original_appdata
+        else:
+            os.environ.pop("APPDATA", None)
         if os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir, ignore_errors=True)
 

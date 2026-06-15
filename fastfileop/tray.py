@@ -240,6 +240,28 @@ class TrayIcon:
                         "FastFileOp",
                         "Restarting with administrator privileges to register DLL..."
                     )
+                    # Schedule a follow-up to check install log for registration result
+                    def _check_install_log():
+                        import time
+                        time.sleep(4)
+                        try:
+                            import os
+                            log_path = os.path.join(os.environ.get('TEMP', os.environ.get('TMP', r'C:\Windows\Temp')), 'fastfileop_install.log')
+                            if os.path.exists(log_path):
+                                # Read last 30 lines
+                                with open(log_path, 'rb') as f:
+                                    f.seek(0, 2)
+                                    size = f.tell()
+                                    f.seek(max(0, size - 16 * 1024))
+                                    tail = f.read().decode('utf-8', errors='replace')
+                                # Show a brief notification if errors present
+                                if 'failed' in tail.lower() or 'error' in tail.lower():
+                                    self.show_notification('FastFileOp - Registration', 'DLL registration appears to have failed. Check install log for details.')
+                        except Exception:
+                            pass
+
+                    import threading
+                    threading.Thread(target=_check_install_log, daemon=True).start()
                 else:
                     logger.error("Failed to request admin elevation")
                     self.show_notification(

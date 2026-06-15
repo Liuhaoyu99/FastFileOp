@@ -211,15 +211,15 @@ class FileEngine:
 
             # Get size after copy (only needed for progress reporting)
             try:
-                src_size = os.path.getsize(dst)
+                file_size = os.path.getsize(src)
             except OSError:
                 try:
-                    src_size = os.path.getsize(src)
+                    file_size = os.path.getsize(dst)
                 except OSError:
-                    src_size = 0
+                    file_size = 0
 
-            fp.total_bytes = src_size
-            fp.copied_bytes = src_size
+            fp.total_bytes = file_size
+            fp.copied_bytes = file_size
             fp.done = True
 
         except Exception as e:

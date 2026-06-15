@@ -416,13 +416,14 @@ class FastFileOpApp:
             if not dll_registered:
                 logger.warning(f"DLL registration status: {dll_msg}")
                 # Show notification after tray starts
-                def show_dll_notification(icon):
+                def show_dll_notification():
                     time.sleep(2)
-                    icon.notify(
-                        "Shell extension not registered. Run as administrator to register.",
-                        "FastFileOp"
-                    )
-                threading.Thread(target=show_dll_notification, args=(self.tray._icon,), daemon=True).start()
+                    if self.tray._icon:
+                        self.tray._icon.notify(
+                            "Shell extension not registered. Run as administrator to register.",
+                            "FastFileOp"
+                        )
+                threading.Thread(target=show_dll_notification, daemon=True).start()
             else:
                 logger.info(f"DLL registration: {dll_msg}")
 
@@ -451,13 +452,14 @@ class FastFileOpApp:
 
             # Show notification if first run (will be shown after tray starts)
             if first_run:
-                def show_first_run_notification(icon):
+                def show_first_run_notification():
                     time.sleep(1)
-                    icon.notify(
-                        "FastFileOp has been set to start with Windows. You can change this in Settings.",
-                        "FastFileOp"
-                    )
-                threading.Thread(target=show_first_run_notification, args=(self.tray._icon,), daemon=True).start()
+                    if self.tray._icon:
+                        self.tray._icon.notify(
+                            "FastFileOp has been set to start with Windows. You can change this in Settings.",
+                            "FastFileOp"
+                        )
+                threading.Thread(target=show_first_run_notification, daemon=True).start()
 
             # Run tray icon on MAIN THREAD (required for Windows)
             # This blocks until tray.stop() is called
