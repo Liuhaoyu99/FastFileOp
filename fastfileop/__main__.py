@@ -27,6 +27,7 @@ from .notify import show_toast
 from .pipe_server import PipeServer
 from .register import ensure_dll_registered, is_dll_registered, register_dll, get_dll_path, run_as_admin
 from .shell import ShellHelper
+from .l10n import get_text
 from .main_window import MainWindow
 from .oplog import OperationLog, LogViewer
 from .settings import SettingsWindow
@@ -86,6 +87,7 @@ class FastFileOpApp:
         self._running = True
         self._instability_detected = False
         self.operation_log = OperationLog()
+        self._main_window: Optional['MainWindow'] = None
 
         # Keyboard hook
         self.hook = KeyboardHook(
@@ -148,16 +150,19 @@ class FastFileOpApp:
     def _open_main(self):
         """Open main operation window in separate thread"""
         def _show():
-            main_win = MainWindow(self.config_manager)
-            main_win.show()
+            self._main_window = MainWindow(self.config_manager)
+            self._main_window.show()
+            self._main_window = None
 
         thread = threading.Thread(target=_show, daemon=True)
         thread.start()
 
     def _open_log(self):
         """Open operation log viewer in separate thread"""
+        lang = self.config_manager.config.language or "en"
+
         def _show():
-            viewer = LogViewer(self.operation_log)
+            viewer = LogViewer(self.operation_log, lang=lang)
             viewer.show()
 
         thread = threading.Thread(target=_show, daemon=True)
@@ -165,8 +170,18 @@ class FastFileOpApp:
 
     def _open_settings(self):
         """Open settings window in separate thread"""
+        def _on_lang(new_lang):
+            # Re-translate main window if open
+            if self._main_window is not None:
+                try:
+                    self._main_window._window.after(0, self._main_window._re_translate)
+                except Exception:
+                    pass
+            # Refresh tray menu
+            self.tray._refresh_icon()
+
         def _show():
-            settings = SettingsWindow(self.config_manager)
+            settings = SettingsWindow(self.config_manager, on_language_change=_on_lang)
             settings.show()
 
         thread = threading.Thread(target=_show, daemon=True)
@@ -326,6 +341,7 @@ class FastFileOpApp:
     def _handle_delete(self, shift_pressed: bool):
         """Handle delete operation (Delete / Shift+Delete)"""
         config = self.config_manager.config
+        lang = config.language or "en"
 
         # Check if delete hook is enabled
         if not config.hook_delete:
@@ -342,30 +358,32 @@ class FastFileOpApp:
             return
 
         permanent = shift_pressed
-        operation = "Deleting permanently" if permanent else "Moving to Recycle Bin"
+        mode_str = get_text("delete_mode_permanent", lang) if permanent else get_text("delete_mode_recycle", lang)
+        operation = f"Deleting permanently ({mode_str})" if permanent else f"Moving to Recycle Bin ({mode_str})"
 
         # Confirmation dialog (unless disabled in settings)
         if config.confirm_delete:
             file_list = "\n".join(str(Path(f).name) for f in files[:10])
             if len(files) > 10:
-                file_list += f"\n... and {len(files) - 10} more"
-            msg = (
-                f"Delete {len(files)} item(s)?\n\n{file_list}\n\n"
-                f"Mode: {'Permanent' if permanent else 'Recycle Bin'}"
-            )
-            if not self._confirm_dialog("FastFileOp - Confirm Delete", msg):
+                extra = len(files) - 10
+                if lang == "zh":
+                    file_list += f"\n...以及其他 {extra} 个"
+                else:
+                    file_list += f"\n... and {extra} more"
+            msg = get_text("confirm_delete_msg", lang) % (len(files), file_list, mode_str)
+            if not self._confirm_dialog(get_text("confirm_delete_title", lang), msg):
                 logger.info("Delete cancelled by user")
-                self.operation_log.add(f"Delete cancelled: {len(files)} items")
+                self.operation_log.add(f"{get_text('delete_cancelled', lang)}: {len(files)} items")
                 return
 
         self.operation_log.add(
-            f"Delete {'(permanent)' if permanent else '(recycle)'}: {len(files)} items"
+            f"Delete {'(' + mode_str + ')' if mode_str else ''}: {len(files)} items"
         )
 
         # Show start notification
         show_toast(
-            "FastFileOp - Deleting",
-            f"{len(files)} items ({operation})",
+            f"FastFileOp - {get_text('notify_delete', lang)}",
+            get_text("notify_deleting", lang) % (len(files), mode_str),
         )
 
         with self._engine_lock:
@@ -383,13 +401,13 @@ class FastFileOpApp:
                     self.operation_log.add(f"  {len(failed)} failures")
                     show_toast(
                         "FastFileOp - Warning",
-                        f"Delete completed with {len(failed)} failures",
+                        get_text("notify_warning", lang) % len(failed),
                         tag="fastfileop_op",
                     )
                 else:
                     show_toast(
                         "FastFileOp - Done",
-                        f"Deleted {len(files)} items",
+                        get_text("notify_done", lang) % (len(files), mode_str),
                         tag="fastfileop_op",
                     )
 
@@ -398,7 +416,7 @@ class FastFileOpApp:
                 self.operation_log.add(f"  Error: {e}")
                 show_toast(
                     "FastFileOp - Error",
-                    f"Delete failed: {e}",
+                    get_text("notify_error", lang) % str(e),
                     tag="fastfileop_op",
                 )
             finally:

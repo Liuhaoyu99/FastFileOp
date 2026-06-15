@@ -10,6 +10,8 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Optional
 
+from .l10n import get_text, LANG_EN
+
 logger = logging.getLogger(__name__)
 
 MAX_LOG_ENTRIES = 500
@@ -49,9 +51,13 @@ class OperationLog:
 class LogViewer:
     """tkinter log viewer window"""
 
-    def __init__(self, op_log: OperationLog):
+    def __init__(self, op_log: OperationLog, lang: str = LANG_EN):
         self._op_log = op_log
+        self._lang = lang
         self._window: Optional[tk.Toplevel] = None
+
+    def _tr(self, key: str) -> str:
+        return get_text(key, self._lang)
 
     def show(self):
         if self._window is not None:
@@ -66,12 +72,11 @@ class LogViewer:
         root.withdraw()
 
         win = tk.Toplevel(root)
-        win.title("FastFileOp - Operation Log")
+        win.title(self._tr("log_title"))
         win.geometry("620x400")
         win.resizable(True, True)
         win.transient(root)
 
-        # Text widget with scrollbar
         frame = ttk.Frame(win, padding=10)
         frame.pack(fill=tk.BOTH, expand=True)
 
@@ -82,7 +87,6 @@ class LogViewer:
         text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Populate
         text.configure(state='normal')
         for entry in self._op_log.get_all():
             line = f"[{LogViewer.fmt_time(entry.timestamp)}] {entry.message}\n"
@@ -90,12 +94,10 @@ class LogViewer:
         text.configure(state='disabled')
         text.see(tk.END)
 
-        # Close button
         btn_frame = ttk.Frame(win)
         btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        ttk.Button(btn_frame, text="Close", command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text=self._tr("log_close"), command=win.destroy).pack(side=tk.RIGHT)
 
-        # Center
         win.update_idletasks()
         x = (win.winfo_screenwidth() - 620) // 2
         y = (win.winfo_screenheight() - 400) // 2

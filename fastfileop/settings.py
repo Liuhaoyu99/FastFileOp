@@ -1,4 +1,4 @@
-"""FastFileOp - Settings Window Module
+"""FastFileOp - Settings Window Module (fully translatable)
 
 Provides tkinter-based settings interface.
 """
@@ -7,28 +7,47 @@ import logging
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
-from typing import Optional
+from typing import Optional, Callable
+
+from .l10n import get_text, LANG_EN, LANG_ZH
 
 logger = logging.getLogger(__name__)
 
 
 class SettingsWindow:
-    """Settings window
+    """Settings window with full i18n support"""
 
-    Provides controls for:
-    - Buffer size (slider)
-    - Worker threads (spinbox)
-    - Hook switches (checkboxes)
-    - Auto-start (checkbox)
-    - Debug mode (checkbox)
-    """
-
-    def __init__(self, config_manager):
+    def __init__(
+        self,
+        config_manager,
+        on_language_change: Optional[Callable[[str], None]] = None,
+    ):
         self.config_manager = config_manager
+        self._on_language_change = on_language_change
         self._window: Optional[tk.Tk] = None
+        self._lang: str = config_manager.config.language or LANG_EN
+
+        # Widget references for re-translation
+        self._engine_frame: Optional[ttk.LabelFrame] = None
+        self._buf_label: Optional[ttk.Label] = None
+        self._worker_label: Optional[ttk.Label] = None
+        self._intercept_frame: Optional[ttk.LabelFrame] = None
+        self._hook_copy_cb: Optional[ttk.Checkbutton] = None
+        self._hook_delete_cb: Optional[ttk.Checkbutton] = None
+        self._hook_drag_cb: Optional[ttk.Checkbutton] = None
+        self._lang_frame: Optional[ttk.LabelFrame] = None
+        self._security_frame: Optional[ttk.LabelFrame] = None
+        self._confirm_delete_cb: Optional[ttk.Checkbutton] = None
+        self._system_frame: Optional[ttk.LabelFrame] = None
+        self._auto_start_cb: Optional[ttk.Checkbutton] = None
+        self._debug_cb: Optional[ttk.Checkbutton] = None
+        self._save_btn: Optional[ttk.Button] = None
+        self._cancel_btn_settings: Optional[ttk.Button] = None
+
+    def _tr(self, key: str) -> str:
+        return get_text(key, self._lang)
 
     def show(self):
-        """Show settings window"""
         if self._window is not None:
             try:
                 self._window.lift()
@@ -36,154 +55,172 @@ class SettingsWindow:
                 return
             except tk.TclError:
                 self._window = None
-
         self._create_window()
 
     def _create_window(self):
         config = self.config_manager.config
+        self._lang = config.language or LANG_EN
 
         self._window = tk.Tk()
-        self._window.title("FastFileOp Settings")
-        self._window.geometry("480x560")
+        self._window.title(self._tr("settings_title"))
+        self._window.geometry("480x600")
         self._window.resizable(False, False)
 
-        # Center window
         self._window.update_idletasks()
         x = (self._window.winfo_screenwidth() - 480) // 2
-        y = (self._window.winfo_screenheight() - 560) // 2
+        y = (self._window.winfo_screenheight() - 600) // 2
         self._window.geometry(f"+{x}+{y}")
 
-        main_frame = ttk.Frame(self._window, padding=20)
+        # Canvas + scrollbar for the whole content
+        canvas = tk.Canvas(self._window, borderwidth=0, highlightthickness=0)
+        vsb = ttk.Scrollbar(self._window, orient=tk.VERTICAL, command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        # Mouse wheel
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        main_frame = ttk.Frame(scroll_frame, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # === Engine Settings ===
-        engine_frame = ttk.LabelFrame(main_frame, text="Engine Settings", padding=10)
-        engine_frame.pack(fill=tk.X, pady=(0, 10))
+        self._engine_frame = ttk.LabelFrame(main_frame, text=self._tr("engine_settings"), padding=10)
+        self._engine_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # Buffer size
-        buf_frame = ttk.Frame(engine_frame)
+        buf_frame = ttk.Frame(self._engine_frame)
         buf_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(buf_frame, text="Buffer Size:").pack(side=tk.LEFT)
+        self._buf_label = ttk.Label(buf_frame, text=self._tr("buffer_size"))
+        self._buf_label.pack(side=tk.LEFT)
         self._buffer_var = tk.IntVar(value=config.buffer_size_mb)
-        self._buffer_label = ttk.Label(buf_frame, text=f"{config.buffer_size_mb} MB")
-        self._buffer_label.pack(side=tk.RIGHT)
-        buf_scale = ttk.Scale(
-            buf_frame,
-            from_=32,
-            to=512,
-            variable=self._buffer_var,
-            orient=tk.HORIZONTAL,
+        self._buffer_val_label = ttk.Label(buf_frame, text=f"{config.buffer_size_mb} MB")
+        self._buffer_val_label.pack(side=tk.RIGHT)
+        ttk.Scale(
+            buf_frame, from_=32, to=512,
+            variable=self._buffer_var, orient=tk.HORIZONTAL,
             command=self._update_buffer_label,
-        )
-        buf_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
-        # Worker threads
-        worker_frame = ttk.Frame(engine_frame)
+        worker_frame = ttk.Frame(self._engine_frame)
         worker_frame.pack(fill=tk.X, pady=5)
-        ttk.Label(worker_frame, text="Worker Threads:").pack(side=tk.LEFT)
+        self._worker_label = ttk.Label(worker_frame, text=self._tr("worker_threads"))
+        self._worker_label.pack(side=tk.LEFT)
         self._workers_var = tk.IntVar(value=config.worker_threads)
-        worker_spin = ttk.Spinbox(
-            worker_frame,
-            from_=1,
-            to=8,
-            textvariable=self._workers_var,
-            width=8,
-        )
-        worker_spin.pack(side=tk.RIGHT)
+        ttk.Spinbox(
+            worker_frame, from_=1, to=8,
+            textvariable=self._workers_var, width=8,
+        ).pack(side=tk.RIGHT)
 
         # === Interception Settings ===
-        intercept_frame = ttk.LabelFrame(main_frame, text="Interception Settings", padding=10)
-        intercept_frame.pack(fill=tk.X, pady=(0, 10))
+        self._intercept_frame = ttk.LabelFrame(main_frame, text=self._tr("interception_settings"), padding=10)
+        self._intercept_frame.pack(fill=tk.X, pady=(0, 10))
 
         self._hook_copy_var = tk.BooleanVar(value=config.hook_copy)
-        ttk.Checkbutton(
-            intercept_frame,
-            text="Intercept Copy/Move (Ctrl+C/X, Ctrl+V)",
+        self._hook_copy_cb = ttk.Checkbutton(
+            self._intercept_frame,
+            text=self._tr("intercept_copy"),
             variable=self._hook_copy_var,
-        ).pack(anchor=tk.W, pady=2)
+        )
+        self._hook_copy_cb.pack(anchor=tk.W, pady=2)
 
         self._hook_delete_var = tk.BooleanVar(value=config.hook_delete)
-        ttk.Checkbutton(
-            intercept_frame,
-            text="Intercept Delete (Delete, Shift+Delete)",
+        self._hook_delete_cb = ttk.Checkbutton(
+            self._intercept_frame,
+            text=self._tr("intercept_delete"),
             variable=self._hook_delete_var,
-        ).pack(anchor=tk.W, pady=2)
+        )
+        self._hook_delete_cb.pack(anchor=tk.W, pady=2)
 
         self._hook_drag_var = tk.BooleanVar(value=config.hook_drag)
-        drag_check = ttk.Checkbutton(
-            intercept_frame,
-            text="Intercept Drag & Drop (requires FastFileOpShim.dll)",
+        self._hook_drag_cb = ttk.Checkbutton(
+            self._intercept_frame,
+            text=self._tr("intercept_drag"),
             variable=self._hook_drag_var,
         )
-        drag_check.pack(anchor=tk.W, pady=2)
+        self._hook_drag_cb.pack(anchor=tk.W, pady=2)
 
         # === Language ===
-        lang_frame = ttk.LabelFrame(main_frame, text="Language", padding=10)
-        lang_frame.pack(fill=tk.X, pady=(0, 10))
+        self._lang_frame = ttk.LabelFrame(main_frame, text=self._tr("language"), padding=10)
+        self._lang_frame.pack(fill=tk.X, pady=(0, 10))
 
         self._lang_var = tk.StringVar(value=config.language)
-        lang_en = ttk.Radiobutton(lang_frame, text="English", variable=self._lang_var, value="en")
-        lang_en.pack(anchor=tk.W, pady=2)
-        lang_zh = ttk.Radiobutton(lang_frame, text="中文", variable=self._lang_var, value="zh")
-        lang_zh.pack(anchor=tk.W, pady=2)
+        ttk.Radiobutton(self._lang_frame, text="English",
+                        variable=self._lang_var, value="en").pack(anchor=tk.W, pady=2)
+        ttk.Radiobutton(self._lang_frame, text="中文",
+                        variable=self._lang_var, value="zh").pack(anchor=tk.W, pady=2)
 
         # === Security ===
-        security_frame = ttk.LabelFrame(main_frame, text="Security", padding=10)
-        security_frame.pack(fill=tk.X, pady=(0, 10))
+        self._security_frame = ttk.LabelFrame(main_frame, text=self._tr("security"), padding=10)
+        self._security_frame.pack(fill=tk.X, pady=(0, 10))
 
         self._confirm_delete_var = tk.BooleanVar(value=config.confirm_delete)
-        ttk.Checkbutton(
-            security_frame,
-            text="Show confirmation before deleting files",
+        self._confirm_delete_cb = ttk.Checkbutton(
+            self._security_frame,
+            text=self._tr("confirm_delete"),
             variable=self._confirm_delete_var,
-        ).pack(anchor=tk.W, pady=2)
+        )
+        self._confirm_delete_cb.pack(anchor=tk.W, pady=2)
 
         # === System Settings ===
-        system_frame = ttk.LabelFrame(main_frame, text="System Settings", padding=10)
-        system_frame.pack(fill=tk.X, pady=(0, 10))
+        self._system_frame = ttk.LabelFrame(main_frame, text=self._tr("system_settings"), padding=10)
+        self._system_frame.pack(fill=tk.X, pady=(0, 10))
 
-        # Read actual registry state for auto-start
         auto_start_registered = self.config_manager.is_auto_start_registered()
         self._auto_start_var = tk.BooleanVar(value=auto_start_registered)
-        ttk.Checkbutton(
-            system_frame,
-            text="Start with Windows",
+        self._auto_start_cb = ttk.Checkbutton(
+            self._system_frame,
+            text=self._tr("start_with_windows"),
             variable=self._auto_start_var,
-        ).pack(anchor=tk.W, pady=2)
+        )
+        self._auto_start_cb.pack(anchor=tk.W, pady=2)
 
         self._debug_var = tk.BooleanVar(value=config.debug_mode)
-        ttk.Checkbutton(
-            system_frame,
-            text="Debug Mode (verbose logging)",
+        self._debug_cb = ttk.Checkbutton(
+            self._system_frame,
+            text=self._tr("debug_mode"),
             variable=self._debug_var,
-        ).pack(anchor=tk.W, pady=2)
+        )
+        self._debug_cb.pack(anchor=tk.W, pady=2)
 
         # === Buttons ===
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(10, 0))
 
-        ttk.Button(btn_frame, text="Save", command=self._save).pack(side=tk.RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=self._close).pack(side=tk.RIGHT)
+        self._save_btn = ttk.Button(
+            btn_frame, text=self._tr("save"), command=self._save, width=10,
+        )
+        self._save_btn.pack(side=tk.RIGHT, padx=5)
+
+        self._cancel_btn_settings = ttk.Button(
+            btn_frame, text=self._tr("cancel_settings"), command=self._close, width=10,
+        )
+        self._cancel_btn_settings.pack(side=tk.RIGHT)
 
         self._window.protocol("WM_DELETE_WINDOW", self._close)
         self._window.mainloop()
 
     def _update_buffer_label(self, value):
-        """Update buffer size label"""
-        self._buffer_label.config(text=f"{int(float(value))} MB")
+        self._buffer_val_label.config(text=f"{int(float(value))} MB")
 
     def _save(self):
-        """Save settings"""
         try:
+            new_lang = self._lang_var.get()
             buffer_size_mb = self._buffer_var.get()
             worker_threads = self._workers_var.get()
             hook_copy = self._hook_copy_var.get()
             hook_delete = self._hook_delete_var.get()
             hook_drag = self._hook_drag_var.get()
-            auto_start = self._auto_start_var.get()
+            confirm_delete = self._confirm_delete_var.get()
             debug_mode = self._debug_var.get()
+            auto_start = self._auto_start_var.get()
 
-            # Update config
+            # Detect language change
+            lang_changed = new_lang != self._lang
+
             self.config_manager.update(
                 buffer_size_mb=buffer_size_mb,
                 worker_threads=worker_threads,
@@ -191,26 +228,56 @@ class SettingsWindow:
                 hook_delete=hook_delete,
                 hook_drag=hook_drag,
                 debug_mode=debug_mode,
-                language=self._lang_var.get(),
-                confirm_delete=self._confirm_delete_var.get(),
+                language=new_lang,
+                confirm_delete=confirm_delete,
             )
 
-            # Handle auto-start separately (registry)
             self.config_manager.set_auto_start(auto_start)
 
-            # Update debug mode
             from .logger import set_debug_mode
             set_debug_mode(debug_mode)
 
-            messagebox.showinfo("Success", "Settings saved.", parent=self._window)
+            if lang_changed:
+                self._lang = new_lang
+                self._re_translate()
+                if self._on_language_change:
+                    self._on_language_change(new_lang)
+
+            messagebox.showinfo(
+                self._tr("settings_success"),
+                self._tr("settings_saved"),
+                parent=self._window,
+            )
             self._close()
 
         except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
-            messagebox.showerror("Error", f"Failed to save settings: {e}", parent=self._window)
+            logger.error("Failed to save settings: %s", e)
+            messagebox.showerror(
+                self._tr("settings_error_title"),
+                self._tr("settings_error") % str(e),
+                parent=self._window,
+            )
+
+    def _re_translate(self):
+        """Update all UI text to current language"""
+        self._window.title(self._tr("settings_title"))
+        self._engine_frame.config(text=self._tr("engine_settings"))
+        self._buf_label.config(text=self._tr("buffer_size"))
+        self._worker_label.config(text=self._tr("worker_threads"))
+        self._intercept_frame.config(text=self._tr("interception_settings"))
+        self._hook_copy_cb.config(text=self._tr("intercept_copy"))
+        self._hook_delete_cb.config(text=self._tr("intercept_delete"))
+        self._hook_drag_cb.config(text=self._tr("intercept_drag"))
+        self._lang_frame.config(text=self._tr("language"))
+        self._security_frame.config(text=self._tr("security"))
+        self._confirm_delete_cb.config(text=self._tr("confirm_delete"))
+        self._system_frame.config(text=self._tr("system_settings"))
+        self._auto_start_cb.config(text=self._tr("start_with_windows"))
+        self._debug_cb.config(text=self._tr("debug_mode"))
+        self._save_btn.config(text=self._tr("save"))
+        self._cancel_btn_settings.config(text=self._tr("cancel_settings"))
 
     def _close(self):
-        """Close window"""
         if self._window:
             self._window.destroy()
             self._window = None

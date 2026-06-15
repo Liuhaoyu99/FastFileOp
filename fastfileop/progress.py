@@ -18,6 +18,8 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Optional, Callable
 
+from .l10n import get_text, LANG_EN, LANG_ZH
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +34,7 @@ class ProgressWindow:
         total_bytes: int = 0,
         on_pause: Optional[Callable] = None,
         on_cancel: Optional[Callable] = None,
+        lang: str = LANG_EN,
     ):
         self.title = title
         self.operation = operation
@@ -39,6 +42,7 @@ class ProgressWindow:
         self.total_bytes = total_bytes
         self.on_pause = on_pause
         self.on_cancel = on_cancel
+        self._lang = lang
 
         self._paused = False
         self._cancelled = False
@@ -102,84 +106,78 @@ class ProgressWindow:
         self._root.after(100, _process_queue)
         self._root.mainloop()
 
+    def _tr(self, key: str) -> str:
+        return get_text(key, self._lang)
+
     def _build_window(self):
         """Build the progress window UI"""
         win = tk.Toplevel(self._root)
-        win.title(f"{self.title} - {self.operation}")
+        win.title(self._tr("progress_title") % self.operation)
         win.geometry("500x220")
         win.resizable(False, False)
         win.protocol("WM_DELETE_WINDOW", self._on_close_click)
 
-        # Center on screen
         win.update_idletasks()
         x = (win.winfo_screenwidth() - 500) // 2
         y = (win.winfo_screenheight() - 220) // 2
         win.geometry(f"+{x}+{y}")
 
-        # Main frame
         main_frame = ttk.Frame(win, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Operation label
         op_label = ttk.Label(
             main_frame,
-            text=f"{self.operation} files...",
+            text=f"{self.operation}...",
             font=("Segoe UI", 12, "bold")
         )
         op_label.pack(anchor=tk.W)
 
-        # Current file
         self._file_label = ttk.Label(
             main_frame,
-            text="Preparing...",
+            text=self._tr("progress_preparing"),
             font=("Segoe UI", 9),
             wraplength=460
         )
         self._file_label.pack(anchor=tk.W, pady=(10, 0))
 
-        # Progress bar
         self._progress_bar = ttk.Progressbar(
             main_frame, mode='determinate', length=460
         )
         self._progress_bar.pack(fill=tk.X, pady=(10, 0))
 
-        # Progress label
         self._progress_label = ttk.Label(
-            main_frame, text="0 / 0 files (0%)", font=("Segoe UI", 9)
+            main_frame, text=self._tr("progress_files") % (0, 0, 0), font=("Segoe UI", 9)
         )
         self._progress_label.pack(anchor=tk.W)
 
-        # Info frame
         info_frame = ttk.Frame(main_frame)
         info_frame.pack(fill=tk.X, pady=(5, 0))
 
         self._speed_label = ttk.Label(
-            info_frame, text="Speed: -- MB/s", font=("Segoe UI", 9)
+            info_frame, text=self._tr("progress_speed") % "--", font=("Segoe UI", 9)
         )
         self._speed_label.pack(side=tk.LEFT)
 
         self._time_label = ttk.Label(
-            info_frame, text="Time remaining: --:--", font=("Segoe UI", 9)
+            info_frame, text=self._tr("progress_eta") % "--:--", font=("Segoe UI", 9)
         )
         self._time_label.pack(side=tk.RIGHT)
 
-        # Button frame
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(15, 0))
 
         self._pause_btn = ttk.Button(
-            btn_frame, text="Pause",
+            btn_frame, text=get_text("pause", self._lang),
             command=self._on_pause_click, width=10
         )
         self._pause_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         self._cancel_btn = ttk.Button(
-            btn_frame, text="Cancel",
+            btn_frame, text=get_text("cancel", self._lang),
             command=self._on_cancel_click, width=10
         )
         self._cancel_btn.pack(side=tk.LEFT)
 
-        # Bring to front
         win.attributes('-topmost', True)
         win.lift()
         win.focus_force()
@@ -221,18 +219,18 @@ class ProgressWindow:
                 pct = 0
             self._progress_bar['value'] = pct
             self._progress_label.config(
-                text=f"{files_done} / {self.total_files} files ({pct:.1f}%)"
+                text=self._tr("progress_files") % (files_done, self.total_files, pct)
             )
 
             elapsed = time.time() - self._start_time
             if elapsed > 0 and bytes_done > 0:
                 speed = bytes_done / elapsed
-                self._speed_label.config(text=f"Speed: {self._fmt_size(speed)}/s")
+                self._speed_label.config(text=self._tr("progress_speed") % self._fmt_size(speed))
                 if speed > 0 and self.total_bytes > bytes_done:
                     remain = (self.total_bytes - bytes_done) / speed
-                    self._time_label.config(text=f"Time remaining: {self._fmt_time(remain)}")
+                    self._time_label.config(text=self._tr("progress_eta") % self._fmt_time(remain))
         except Exception as e:
-            logger.debug(f"Progress update error: {e}")
+            logger.debug("Progress update error: %s", e)
 
     def set_complete(self, success: bool = True, message: str = ""):
         """Thread-safe mark complete"""
@@ -247,13 +245,12 @@ class ProgressWindow:
         try:
             self._progress_bar['value'] = 100
             if success:
-                self._file_label.config(text="Operation completed successfully!")
-                self._progress_label.config(text=f"{self.total_files} files processed")
+                self._file_label.config(text=self._tr("progress_done_success"))
+                self._progress_label.config(text=self._tr("progress_completed") % self.total_files)
             else:
-                self._file_label.config(text=message or "Operation failed")
+                self._file_label.config(text=message or self._tr("progress_done_fail"))
             self._pause_btn.config(state='disabled')
-            self._cancel_btn.config(text="Close")
-            # Rebind cancel button to close
+            self._cancel_btn.config(text=self._tr("progress_close"))
             self._cancel_btn.config(command=self.close)
         except Exception:
             pass
@@ -261,11 +258,11 @@ class ProgressWindow:
     def _on_pause_click(self):
         self._paused = not self._paused
         if self._paused:
-            self._pause_btn.config(text="Resume")
+            self._pause_btn.config(text=self._tr("resume"))
             if self.on_pause:
                 self.on_pause(True)
         else:
-            self._pause_btn.config(text="Pause")
+            self._pause_btn.config(text=self._tr("pause"))
             if self.on_pause:
                 self.on_pause(False)
 

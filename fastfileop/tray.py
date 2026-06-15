@@ -12,6 +12,7 @@ from typing import Callable, Optional
 
 import pystray
 from PIL import Image, ImageDraw, ImageFont
+from .l10n import get_text, LANG_EN
 
 logger = logging.getLogger(__name__)
 
@@ -118,94 +119,48 @@ class TrayIcon:
         self._dll_registered = registered
         self._refresh_icon()
 
+    def _lang(self) -> str:
+        return getattr(self.config_manager.config, "language", LANG_EN)
+
+    def _tr(self, key: str) -> str:
+        return get_text(key, self._lang())
+
     def _get_menu(self) -> pystray.Menu:
         """Create right-click menu"""
         if self._instability:
-            # Instability menu
             return pystray.Menu(
-                pystray.MenuItem(
-                    "Status: UNSTABLE",
-                    None,
-                    enabled=False,
-                ),
-                pystray.MenuItem(
-                    "Interception paused due to errors",
-                    None,
-                    enabled=False,
-                ),
+                pystray.MenuItem(self._tr("tray_unstable"), None, enabled=False),
+                pystray.MenuItem(self._tr("tray_unstable_msg"), None, enabled=False),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem(
-                    "Resume Interception",
-                    self._resume_interception,
-                ),
-                pystray.MenuItem(
-                    "Open FastFileOp...",
-                    self._open_main,
-                ),
-                pystray.MenuItem(
-                    "View Log",
-                    self._view_log,
-                ),
+                pystray.MenuItem(self._tr("tray_resume_interception"), self._resume_interception),
+                pystray.MenuItem(self._tr("tray_open"), self._open_main),
+                pystray.MenuItem(self._tr("tray_view_log"), self._view_log),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem(
-                    "Settings...",
-                    self._open_settings,
-                ),
+                pystray.MenuItem(self._tr("tray_settings"), self._open_settings),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem(
-                    "Exit",
-                    self._quit,
-                ),
+                pystray.MenuItem(self._tr("tray_exit"), self._quit),
             )
 
-        # Normal menu
-        status_text = "Paused" if self._paused else "Active"
-        pause_label = "Resume" if self._paused else "Pause"
+        status_text = self._tr("tray_status_paused") if self._paused else self._tr("tray_status_active")
+        pause_label = self._tr("tray_resume") if self._paused else self._tr("tray_pause")
 
-        # DLL status item
         if self._dll_registered:
-            dll_item = pystray.MenuItem(
-                "DLL: Registered",
-                None,
-                enabled=False,
-            )
+            dll_item = pystray.MenuItem(self._tr("tray_dll_registered"), None, enabled=False)
         else:
-            dll_item = pystray.MenuItem(
-                "Register Shell Extension...",
-                self._register_dll,
-            )
+            dll_item = pystray.MenuItem(self._tr("tray_register_dll"), self._register_dll)
 
         return pystray.Menu(
-            pystray.MenuItem(
-                f"Status: {status_text}",
-                None,
-                enabled=False,
-            ),
+            pystray.MenuItem(status_text, None, enabled=False),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "Open FastFileOp...",
-                self._open_main,
-            ),
-            pystray.MenuItem(
-                "View Log",
-                self._view_log,
-            ),
+            pystray.MenuItem(self._tr("tray_open"), self._open_main),
+            pystray.MenuItem(self._tr("tray_view_log"), self._view_log),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                pause_label,
-                self._toggle_pause,
-            ),
-            pystray.MenuItem(
-                "Settings...",
-                self._open_settings,
-            ),
+            pystray.MenuItem(pause_label, self._toggle_pause),
+            pystray.MenuItem(self._tr("tray_settings"), self._open_settings),
             pystray.Menu.SEPARATOR,
             dll_item,
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "Exit",
-                self._quit,
-            ),
+            pystray.MenuItem(self._tr("tray_exit"), self._quit),
         )
 
     def _toggle_pause(self, icon, item):
