@@ -88,6 +88,7 @@ class TrayIcon:
         on_toggle_pause: Optional[Callable] = None,
         on_resume_interception: Optional[Callable] = None,
         on_open_main: Optional[Callable] = None,
+        on_view_log: Optional[Callable] = None,
     ):
         """
         Args:
@@ -97,6 +98,7 @@ class TrayIcon:
             on_toggle_pause: Optional callback when pause state changes
             on_resume_interception: Callback to resume from instability
             on_open_main: Callback to open the main operation window
+            on_view_log: Callback to open the operation log viewer
         """
         self.config_manager = config_manager
         self.on_settings = on_settings
@@ -104,6 +106,7 @@ class TrayIcon:
         self.on_toggle_pause = on_toggle_pause
         self.on_resume_interception = on_resume_interception
         self.on_open_main = on_open_main
+        self.on_view_log = on_view_log
 
         self._icon: Optional[pystray.Icon] = None
         self._paused = config_manager.config.paused
@@ -138,6 +141,10 @@ class TrayIcon:
                 pystray.MenuItem(
                     "Open FastFileOp...",
                     self._open_main,
+                ),
+                pystray.MenuItem(
+                    "View Log",
+                    self._view_log,
                 ),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(
@@ -178,6 +185,10 @@ class TrayIcon:
             pystray.MenuItem(
                 "Open FastFileOp...",
                 self._open_main,
+            ),
+            pystray.MenuItem(
+                "View Log",
+                self._view_log,
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
@@ -222,6 +233,14 @@ class TrayIcon:
                 self.on_open_main()
         except Exception as e:
             logger.error(f"Failed to open main window: {e}")
+
+    def _view_log(self, icon, item):
+        """Open operation log viewer"""
+        try:
+            if self.on_view_log:
+                self.on_view_log()
+        except Exception as e:
+            logger.error(f"Failed to open log viewer: {e}")
 
     def _open_settings(self, icon, item):
         """Open settings window"""

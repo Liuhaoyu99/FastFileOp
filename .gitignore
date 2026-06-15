@@ -42,7 +42,8 @@ logs/
 *.lib
 *.dll
 
-# Config files (user-specific)
+# Config directory (user-specific runtime data)
+config/
 config.json
 
 # Test artifacts

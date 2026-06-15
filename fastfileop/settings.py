@@ -127,6 +127,17 @@ class SettingsWindow:
         lang_zh = ttk.Radiobutton(lang_frame, text="中文", variable=self._lang_var, value="zh")
         lang_zh.pack(anchor=tk.W, pady=2)
 
+        # === Security ===
+        security_frame = ttk.LabelFrame(main_frame, text="Security", padding=10)
+        security_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self._confirm_delete_var = tk.BooleanVar(value=config.confirm_delete)
+        ttk.Checkbutton(
+            security_frame,
+            text="Show confirmation before deleting files",
+            variable=self._confirm_delete_var,
+        ).pack(anchor=tk.W, pady=2)
+
         # === System Settings ===
         system_frame = ttk.LabelFrame(main_frame, text="System Settings", padding=10)
         system_frame.pack(fill=tk.X, pady=(0, 10))
@@ -181,6 +192,7 @@ class SettingsWindow:
                 hook_drag=hook_drag,
                 debug_mode=debug_mode,
                 language=self._lang_var.get(),
+                confirm_delete=self._confirm_delete_var.get(),
             )
 
             # Handle auto-start separately (registry)

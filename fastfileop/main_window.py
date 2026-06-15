@@ -19,7 +19,7 @@ from typing import Optional
 
 from .engine import FileEngine
 from .config import ConfigManager
-from .l10n import get_text, get_available_languages, LANG_ZH, LANG_EN
+from .l10n import get_text, LANG_ZH, LANG_EN
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,6 @@ class MainWindow:
         self._tree: Optional[ttk.Treeview] = None
         self._progress_bar: Optional[ttk.Progressbar] = None
         self._stats_label: Optional[ttk.Label] = None
-        self._lang_combo: Optional[ttk.Combobox] = None
 
         # State variables (created in show() after Tk root exists)
         self._src_var: Optional[tk.StringVar] = None
@@ -86,8 +85,6 @@ class MainWindow:
         self._build_window()
 
         # Apply language from config
-        initial_display = "中文" if self._lang == LANG_ZH else "English"
-        self._lang_combo.set(initial_display)
         if self._lang == LANG_ZH:
             self._re_translate()
 
@@ -136,20 +133,7 @@ class MainWindow:
         self._opt_frame = ttk.LabelFrame(win, text=self._tr("options"), padding=10)
         self._opt_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        # Language selector (top-right of options)
-        lang_frame = ttk.Frame(self._opt_frame)
-        lang_frame.pack(fill=tk.X, pady=(0, 5))
-        lang_frame.columnconfigure(1, weight=1)
-        self._lang_combo = ttk.Combobox(
-            lang_frame, state="readonly", width=10,
-        )
-        lang_codes = []
-        self._lang_map = {}
-        for code, display in get_available_languages():
-            lang_codes.append(display)
-            self._lang_map[display] = code
-        self._lang_combo['values'] = lang_codes
-        self._lang_combo.bind("<<ComboboxSelected>>", self._on_language_change)
+
         self._lang_combo.pack(side=tk.RIGHT)
 
         self._multi_cb = ttk.Checkbutton(
@@ -232,15 +216,6 @@ class MainWindow:
         win.deiconify()
         win.lift()
         win.focus_force()
-
-    def _on_language_change(self, event=None):
-        """Handle language combobox selection"""
-        display_name = self._lang_combo.get()
-        new_lang = self._lang_map.get(display_name, LANG_EN)
-        if new_lang == self._lang:
-            return
-        self._lang = new_lang
-        self._re_translate()
 
     def _re_translate(self):
         """Update all UI text to current language"""

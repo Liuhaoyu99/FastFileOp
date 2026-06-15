@@ -1,7 +1,7 @@
 """FastFileOp - Configuration Management Module
 
 Handles loading, saving, and managing application configuration.
-Config file stored at %APPDATA%/FastFileOp/config.json
+Config file stored at ./config/config.json (next to the executable or script)
 """
 
 import json
@@ -13,12 +13,18 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Paths (computed at runtime, not import time, to respect APPDATA changes in tests)
-def _get_app_data_dir() -> str:
-    return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "FastFileOp")
+
+def _get_config_dir() -> str:
+    """Get the config directory — next to the executable / script root"""
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "config")
+
 
 def _get_config_file() -> str:
-    return os.path.join(_get_app_data_dir(), "config.json")
+    return os.path.join(_get_config_dir(), "config.json")
 
 
 @dataclass
@@ -46,6 +52,9 @@ class AppConfig:
 
     # Language ("en" or "zh")
     language: str = "en"
+
+    # Show confirmation dialog before delete
+    confirm_delete: bool = True
 
     @property
     def buffer_size(self) -> int:
@@ -92,7 +101,7 @@ class ConfigManager:
         """Save configuration to file"""
         try:
             config_file = _get_config_file()
-            os.makedirs(_get_app_data_dir(), exist_ok=True)
+            os.makedirs(_get_config_dir(), exist_ok=True)
             with open(config_file, "w", encoding="utf-8") as f:
                 json.dump(asdict(self._config), f, indent=2, ensure_ascii=False)
             logger.info(f"Configuration saved to {config_file}")

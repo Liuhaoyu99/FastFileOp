@@ -194,6 +194,12 @@ class TestConfigManager(unittest.TestCase):
 
     def test_default_config(self):
         """Test default configuration values"""
+        # Remove any stale config file so we test true defaults
+        from fastfileop.config import _get_config_file
+        cfg_file = _get_config_file()
+        if os.path.exists(cfg_file):
+            os.remove(cfg_file)
+
         config = ConfigManager()
         config.load()
         

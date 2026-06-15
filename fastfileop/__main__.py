@@ -14,7 +14,9 @@ import queue
 import sys
 import threading
 import time
+import tkinter as tk
 from pathlib import Path
+from tkinter import messagebox
 
 from .clipboard import ClipboardMonitor
 from .config import ConfigManager
@@ -26,6 +28,7 @@ from .pipe_server import PipeServer
 from .register import ensure_dll_registered, is_dll_registered, register_dll, get_dll_path, run_as_admin
 from .shell import ShellHelper
 from .main_window import MainWindow
+from .oplog import OperationLog, LogViewer
 from .settings import SettingsWindow
 from .tray import TrayIcon
 
@@ -82,6 +85,7 @@ class FastFileOpApp:
         self._engine_lock = threading.Lock()
         self._running = True
         self._instability_detected = False
+        self.operation_log = OperationLog()
 
         # Keyboard hook
         self.hook = KeyboardHook(
@@ -97,6 +101,7 @@ class FastFileOpApp:
             on_toggle_pause=self._on_pause_toggle,
             on_resume_interception=self._on_resume_interception,
             on_open_main=self._open_main,
+            on_view_log=self._open_log,
         )
 
         # Named pipe server with watchdog
@@ -145,6 +150,15 @@ class FastFileOpApp:
         def _show():
             main_win = MainWindow(self.config_manager)
             main_win.show()
+
+        thread = threading.Thread(target=_show, daemon=True)
+        thread.start()
+
+    def _open_log(self):
+        """Open operation log viewer in separate thread"""
+        def _show():
+            viewer = LogViewer(self.operation_log)
+            viewer.show()
 
         thread = threading.Thread(target=_show, daemon=True)
         thread.start()
@@ -261,6 +275,9 @@ class FastFileOpApp:
         with self._engine_lock:
             self.engine = self._create_engine()
 
+        op_name = "Move" if is_cut else "Copy"
+        self.operation_log.add(f"{op_name}: {len(files)} items -> {Path(dst_dir).name}")
+
         def _run():
             try:
                 if is_cut:
@@ -275,6 +292,7 @@ class FastFileOpApp:
                     logger.warning(f"Operation completed with {len(failed)} failures")
                     for fp in failed:
                         logger.warning(f"  Failed: {fp.src} - {fp.error}")
+                    self.operation_log.add(f"  {len(failed)} failures")
                     show_toast(
                         "FastFileOp - Warning",
                         f"{operation} completed with {len(failed)} failures",
@@ -291,6 +309,7 @@ class FastFileOpApp:
 
             except Exception as e:
                 logger.error(f"File operation error: {e}")
+                self.operation_log.add(f"  Error: {e}")
                 show_toast(
                     "FastFileOp - Error",
                     f"{operation} failed: {e}",
@@ -325,6 +344,24 @@ class FastFileOpApp:
         permanent = shift_pressed
         operation = "Deleting permanently" if permanent else "Moving to Recycle Bin"
 
+        # Confirmation dialog (unless disabled in settings)
+        if config.confirm_delete:
+            file_list = "\n".join(str(Path(f).name) for f in files[:10])
+            if len(files) > 10:
+                file_list += f"\n... and {len(files) - 10} more"
+            msg = (
+                f"Delete {len(files)} item(s)?\n\n{file_list}\n\n"
+                f"Mode: {'Permanent' if permanent else 'Recycle Bin'}"
+            )
+            if not self._confirm_dialog("FastFileOp - Confirm Delete", msg):
+                logger.info("Delete cancelled by user")
+                self.operation_log.add(f"Delete cancelled: {len(files)} items")
+                return
+
+        self.operation_log.add(
+            f"Delete {'(permanent)' if permanent else '(recycle)'}: {len(files)} items"
+        )
+
         # Show start notification
         show_toast(
             "FastFileOp - Deleting",
@@ -343,6 +380,7 @@ class FastFileOpApp:
                 failed = self.engine.get_failed()
                 if failed:
                     logger.warning(f"Delete completed with {len(failed)} failures")
+                    self.operation_log.add(f"  {len(failed)} failures")
                     show_toast(
                         "FastFileOp - Warning",
                         f"Delete completed with {len(failed)} failures",
@@ -357,6 +395,7 @@ class FastFileOpApp:
 
             except Exception as e:
                 logger.error(f"Delete operation error: {e}")
+                self.operation_log.add(f"  Error: {e}")
                 show_toast(
                     "FastFileOp - Error",
                     f"Delete failed: {e}",
@@ -368,6 +407,19 @@ class FastFileOpApp:
 
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
+
+    def _confirm_dialog(self, title: str, message: str) -> bool:
+        """Show a Yes/No confirmation dialog using a temporary tkinter root"""
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            result = messagebox.askokcancel(title, message, parent=root)
+            root.destroy()
+            return result
+        except Exception as e:
+            logger.error("Confirmation dialog error: %s", e)
+            return True  # Allow on error
 
     def _on_progress_pause(self, paused: bool):
         """Handle pause/resume from progress window"""
