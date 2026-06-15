@@ -245,10 +245,14 @@ class TestPipeServer(unittest.TestCase):
 
     def test_server_running_check(self):
         """Test checking if server is running"""
-        from fastfileop.pipe_server import PipeServer
-        
-        # Should not be running initially
-        self.assertFalse(PipeServer.is_server_running())
+        from fastfileop.pipe_server import PipeServer, PIPE_NAME
+        import win32file, pywintypes
+        try:
+            h = win32file.CreateFile(PIPE_NAME, win32file.GENERIC_READ|win32file.GENERIC_WRITE, 0, None, win32file.OPEN_EXISTING, 0, None)
+            win32file.CloseHandle(h)
+            self.skipTest("Server already running")
+        except pywintypes.error:
+            self.assertFalse(PipeServer.is_server_running())
 
     def test_server_start_stop(self):
         """Test starting and stopping server"""
