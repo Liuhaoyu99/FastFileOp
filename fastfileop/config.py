@@ -44,6 +44,9 @@ class AppConfig:
     # Paused state
     paused: bool = False
 
+    # Language ("en" or "zh")
+    language: str = "en"
+
     @property
     def buffer_size(self) -> int:
         """Buffer size in bytes"""

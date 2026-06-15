@@ -35,7 +35,7 @@ class MainWindow:
         self._running = False
         self._start_time = 0.0
         self._last_update = 0.0
-        self._lang = LANG_EN
+        self._lang = config_manager.config.language or LANG_EN
 
         # Saved widget references for re-translation
         self._src_label: Optional[ttk.Label] = None
@@ -56,15 +56,15 @@ class MainWindow:
         self._stats_label: Optional[ttk.Label] = None
         self._lang_combo: Optional[ttk.Combobox] = None
 
-        # State variables
-        self._src_var = tk.StringVar()
-        self._dst_var = tk.StringVar()
-        self._multi_worker_var = tk.BooleanVar(value=True)
-        self._override_newer_var = tk.BooleanVar(value=False)
-        self._mirror_folder_var = tk.BooleanVar(value=True)
+        # State variables (created in show() after Tk root exists)
+        self._src_var: Optional[tk.StringVar] = None
+        self._dst_var: Optional[tk.StringVar] = None
+        self._multi_worker_var: Optional[tk.BooleanVar] = None
+        self._override_newer_var: Optional[tk.BooleanVar] = None
+        self._mirror_folder_var: Optional[tk.BooleanVar] = None
 
     def show(self):
-        """Show the main window (starts UI thread - call from any thread)"""
+        """Show the main window (blocking, call from background thread)"""
         if self._window is not None:
             try:
                 self._window.lift()
@@ -73,14 +73,24 @@ class MainWindow:
             except tk.TclError:
                 self._window = None
 
-        thread = threading.Thread(target=self._run_ui, daemon=True)
-        thread.start()
-
-    def _run_ui(self):
-        """Run tkinter mainloop in dedicated thread"""
         self._window = tk.Tk()
         self._window.withdraw()
+
+        # Create tk variables (need Tk root to exist)
+        self._src_var = tk.StringVar()
+        self._dst_var = tk.StringVar()
+        self._multi_worker_var = tk.BooleanVar(value=True)
+        self._override_newer_var = tk.BooleanVar(value=False)
+        self._mirror_folder_var = tk.BooleanVar(value=True)
+
         self._build_window()
+
+        # Apply language from config
+        initial_display = "中文" if self._lang == LANG_ZH else "English"
+        self._lang_combo.set(initial_display)
+        if self._lang == LANG_ZH:
+            self._re_translate()
+
         self._window.protocol("WM_DELETE_WINDOW", self._on_close)
         self._window.mainloop()
 
@@ -139,10 +149,6 @@ class MainWindow:
             lang_codes.append(display)
             self._lang_map[display] = code
         self._lang_combo['values'] = lang_codes
-        # Default to English
-        default_display = "English"
-        self._lang_combo.set(default_display)
-        self._lang = self._lang_map.get(default_display, LANG_EN)
         self._lang_combo.bind("<<ComboboxSelected>>", self._on_language_change)
         self._lang_combo.pack(side=tk.RIGHT)
 

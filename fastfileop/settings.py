@@ -117,6 +117,16 @@ class SettingsWindow:
         )
         drag_check.pack(anchor=tk.W, pady=2)
 
+        # === Language ===
+        lang_frame = ttk.LabelFrame(main_frame, text="Language", padding=10)
+        lang_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self._lang_var = tk.StringVar(value=config.language)
+        lang_en = ttk.Radiobutton(lang_frame, text="English", variable=self._lang_var, value="en")
+        lang_en.pack(anchor=tk.W, pady=2)
+        lang_zh = ttk.Radiobutton(lang_frame, text="中文", variable=self._lang_var, value="zh")
+        lang_zh.pack(anchor=tk.W, pady=2)
+
         # === System Settings ===
         system_frame = ttk.LabelFrame(main_frame, text="System Settings", padding=10)
         system_frame.pack(fill=tk.X, pady=(0, 10))
@@ -170,6 +180,7 @@ class SettingsWindow:
                 hook_delete=hook_delete,
                 hook_drag=hook_drag,
                 debug_mode=debug_mode,
+                language=self._lang_var.get(),
             )
 
             # Handle auto-start separately (registry)
