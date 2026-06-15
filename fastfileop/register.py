@@ -6,7 +6,6 @@ Handles automatic registration of the shell extension DLL.
 import ctypes
 import logging
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -15,8 +14,8 @@ import winreg
 logger = logging.getLogger(__name__)
 
 # Registry keys for shell extension registration
-COPY_HOOK_KEY = r"Directory\shellex\CopyHookHandlers\FastFileOp.CopyHook"
-DRAG_DROP_KEY = r"Directory\shellex\DragDropHandlers\FastFileOp.DragDropHandler"
+COPY_HOOK_KEY = r"Directory\shellex\CopyHookHandlers\FastFileOp"
+DRAG_DROP_KEY = r"Directory\shellex\DragDropHandlers\FastFileOp"
 CLSID_KEY = r"CLSID\{12345678-1234-1234-1234-123456789ABC}"
 
 
@@ -67,7 +66,7 @@ def get_dll_path() -> Path | None:
 
 
 def register_dll(dll_path: Path) -> bool:
-    """Register the DLL using regsvr32
+    """Register the DLL using ctypes (calls DllRegisterServer@0 directly)
 
     Requires administrator privileges.
 
@@ -86,106 +85,29 @@ def register_dll(dll_path: Path) -> bool:
         return False
 
     try:
-        # Determine correct regsvr32 path. Use DLL PE header to detect whether
-        # the DLL is 32-bit or 64-bit, and choose the corresponding regsvr32
-        # executable on 64-bit Windows. If detection fails, try System32 first
-        # then SysWOW64 as a fallback.
-        import platform
+        dll_dir = str(dll_path.parent)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = dll_dir + os.pathsep + old_path
 
-        def _is_pe64(path: Path) -> Optional[bool]:
-            """Return True if PE is 64-bit, False if 32-bit, None on failure."""
-            try:
-                with open(path, 'rb') as f:
-                    data = f.read(0x100)
-                    if len(data) < 0x40:
-                        return None
-                    # e_lfanew at offset 0x3C (little-endian 4 bytes)
-                    e_lfanew = int.from_bytes(data[0x3C:0x40], 'little')
-                    f.seek(e_lfanew + 4)
-                    # Machine field is 2 bytes at IMAGE_FILE_HEADER
-                    machine = int.from_bytes(f.read(2), 'little')
-                    # IMAGE_FILE_MACHINE_AMD64 = 0x8664, IMAGE_FILE_MACHINE_I386 = 0x014c
-                    if machine == 0x8664:
-                        return True
-                    if machine == 0x014c:
-                        return False
-                    return None
-            except Exception:
-                return None
+        dll = ctypes.WinDLL(str(dll_path))
+        func = getattr(dll, "DllRegisterServer@0")
+        result = func()
 
-        dll_is_64 = _is_pe64(dll_path)
-
-        # Helper to run regsvr32 and capture output
-        def _run_regsvr32(cmd_path: str) -> subprocess.CompletedProcess:
-            return subprocess.run([cmd_path, "/s", str(dll_path)], capture_output=True, timeout=30)
-
-        windir = os.environ.get('WINDIR', r'C:\Windows')
-        tried = []
-
-        # If on 64-bit OS, prefer matching regsvr32 based on dll bitness
-        if platform.machine().endswith('64'):
-            if dll_is_64 is True:
-                candidates = [os.path.join(windir, 'System32', 'regsvr32.exe'), os.path.join(windir, 'SysWOW64', 'regsvr32.exe')]
-            elif dll_is_64 is False:
-                candidates = [os.path.join(windir, 'SysWOW64', 'regsvr32.exe'), os.path.join(windir, 'System32', 'regsvr32.exe')]
-            else:
-                # Unknown bitness; try System32 then SysWOW64
-                candidates = [os.path.join(windir, 'System32', 'regsvr32.exe'), os.path.join(windir, 'SysWOW64', 'regsvr32.exe')]
+        if result == 0:
+            logger.info(f"DLL registered successfully: {dll_path}")
+            return True
         else:
-            candidates = ['regsvr32.exe']
-
-        last_err = None
-        for reg in candidates:
-            tried.append(reg)
-            logger.info(f"Attempting registration with: {reg}")
-            try:
-                res = _run_regsvr32(reg)
-            except subprocess.TimeoutExpired:
-                logger.error(f"regsvr32 timed out for {reg}")
-                last_err = 'timeout'
-                continue
-            except FileNotFoundError:
-                logger.warning(f"regsvr32 not found at: {reg}")
-                last_err = 'notfound'
-                continue
-
-                if res.returncode == 0:
-                    logger.info(f"DLL registered successfully with {reg}: {dll_path}")
-                    return True
-                else:
-                    stdout_out = res.stdout.decode('mbcs', errors='replace').strip()
-                    stderr_out = res.stderr.decode('mbcs', errors='replace').strip()
-                    logger.error(f"regsvr32 ({reg}) failed with code {res.returncode}")
-                    if stdout_out:
-                        logger.error(f"  stdout: {stdout_out}")
-                    if stderr_out:
-                        logger.error(f"  stderr: {stderr_out}")
-                    # Append detailed output to install log for diagnostics
-                    try:
-                        log_path = os.path.join(os.environ.get('TEMP', os.environ.get('TMP', r'C:\Windows\Temp')), 'fastfileop_install.log')
-                        with open(log_path, 'a', encoding='utf-8') as lf:
-                            lf.write(f"\n=== regsvr32 attempt: {reg} ===\n")
-                            lf.write(f"returncode: {res.returncode}\n")
-                            if stdout_out:
-                                lf.write(f"stdout:\n{stdout_out}\n")
-                            if stderr_out:
-                                lf.write(f"stderr:\n{stderr_out}\n")
-                    except Exception:
-                        pass
-                    last_err = stderr_out or stdout_out or str(res.returncode)
-
-        logger.error(f"DLL registration failed after trying: {tried}")
-        if last_err:
-            logger.error(f"Last error: {last_err}")
-        return False
-
+            logger.error(f"DllRegisterServer@0 returned 0x{result:08X}")
+            return False
     except Exception as e:
         logger.error(f"DLL registration error: {e}")
         return False
+    finally:
+        os.environ["PATH"] = old_path
 
 
 def unregister_dll(dll_path: Path) -> bool:
-    """Unregister the DLL using regsvr32
+    """Unregister the DLL using ctypes (calls DllUnregisterServer@0 directly)
 
     Requires administrator privileges.
 
@@ -204,80 +126,25 @@ def unregister_dll(dll_path: Path) -> bool:
         return False
 
     try:
-        import platform
+        dll_dir = str(dll_path.parent)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = dll_dir + os.pathsep + old_path
 
-        def _is_pe64(path: Path) -> Optional[bool]:
-            """Return True if PE is 64-bit, False if 32-bit, None on failure."""
-            try:
-                with open(path, 'rb') as f:
-                    data = f.read(0x100)
-                    if len(data) < 0x40:
-                        return None
-                    e_lfanew = int.from_bytes(data[0x3C:0x40], 'little')
-                    f.seek(e_lfanew + 4)
-                    machine = int.from_bytes(f.read(2), 'little')
-                    if machine == 0x8664:
-                        return True
-                    if machine == 0x014c:
-                        return False
-                    return None
-            except Exception:
-                return None
+        dll = ctypes.WinDLL(str(dll_path))
+        func = getattr(dll, "DllUnregisterServer@0")
+        result = func()
 
-        dll_is_64 = _is_pe64(dll_path)
-
-        def _run_regsvr32(cmd_path: str) -> subprocess.CompletedProcess:
-            return subprocess.run([cmd_path, "/s", "/u", str(dll_path)], capture_output=True, timeout=30)
-
-        windir = os.environ.get('WINDIR', r'C:\Windows')
-        tried = []
-
-        if platform.machine().endswith('64'):
-            if dll_is_64 is True:
-                candidates = [os.path.join(windir, 'System32', 'regsvr32.exe'), os.path.join(windir, 'SysWOW64', 'regsvr32.exe')]
-            elif dll_is_64 is False:
-                candidates = [os.path.join(windir, 'SysWOW64', 'regsvr32.exe'), os.path.join(windir, 'System32', 'regsvr32.exe')]
-            else:
-                candidates = [os.path.join(windir, 'System32', 'regsvr32.exe'), os.path.join(windir, 'SysWOW64', 'regsvr32.exe')]
+        if result == 0:
+            logger.info(f"DLL unregistered successfully: {dll_path}")
+            return True
         else:
-            candidates = ['regsvr32.exe']
-
-        last_err = None
-        for reg in candidates:
-            tried.append(reg)
-            logger.info(f"Attempting unregistration with: {reg}")
-            try:
-                res = _run_regsvr32(reg)
-            except subprocess.TimeoutExpired:
-                logger.error(f"regsvr32 timed out for {reg}")
-                last_err = 'timeout'
-                continue
-            except FileNotFoundError:
-                logger.warning(f"regsvr32 not found at: {reg}")
-                last_err = 'notfound'
-                continue
-
-            if res.returncode == 0:
-                logger.info(f"DLL unregistered successfully with {reg}: {dll_path}")
-                return True
-            else:
-                stdout_out = res.stdout.decode('mbcs', errors='replace').strip()
-                stderr_out = res.stderr.decode('mbcs', errors='replace').strip()
-                logger.error(f"regsvr32 ({reg}) failed with code {res.returncode}")
-                if stdout_out:
-                    logger.error(f"  stdout: {stdout_out}")
-                if stderr_out:
-                    logger.error(f"  stderr: {stderr_out}")
-                last_err = stderr_out or stdout_out or str(res.returncode)
-
-        logger.error(f"DLL unregistration failed after trying: {tried}")
-        if last_err:
-            logger.error(f"Last error: {last_err}")
-        return False
-
+            logger.error(f"DllUnregisterServer@0 returned 0x{result:08X}")
+            return False
     except Exception as e:
         logger.error(f"DLL unregistration error: {e}")
         return False
+    finally:
+        os.environ["PATH"] = old_path
 
 
 def run_as_admin(args: list[str] = None) -> bool:
