@@ -99,8 +99,7 @@ if %errorlevel% equ 0 (
 
 :step5
 echo [Step 5/5] Configuring auto-start and launching...
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" ^
-    /v "FastFileOp" /t REG_SZ /d "\"%INSTALL_DIR%\FastFileOp.exe\" --silent" /f >nul
+powershell -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\FastFileOp.lnk'); $s.TargetPath='%INSTALL_DIR%\FastFileOp.exe'; $s.Arguments='--silent'; $s.WorkingDirectory='%INSTALL_DIR%'; $s.Save()"
 if %errorlevel% equ 0 ( echo Auto-start configured. ) else ( echo WARNING: Failed to configure auto-start. )
 
 echo. & echo Starting FastFileOp...

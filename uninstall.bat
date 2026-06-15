@@ -83,8 +83,8 @@ reg delete "HKCR\CLSID\{D4E5F6A7-B8C9-0123-DEF0-234567890123}" /f >nul 2>&1
 :: ============================================================
 echo [Step 3/4] Removing auto-start entry...
 
-reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "FastFileOp" /f >nul 2>&1
-if %errorlevel% equ 0 (
+if exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\FastFileOp.lnk" (
+    del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\FastFileOp.lnk" >nul
     echo Auto-start entry removed.
 ) else (
     echo No auto-start entry found.

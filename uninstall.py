@@ -72,11 +72,9 @@ def main():
 
     # Step 3: Remove auto-start entry
     print("[Step 3/4] Removing auto-start entry...")
-    result = subprocess.run(
-        ["reg", "delete", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "/v", "FastFileOp", "/f"],
-        capture_output=True
-    )
-    if result.returncode == 0:
+    shortcut = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "FastFileOp.lnk"
+    if shortcut.exists():
+        shortcut.unlink()
         print("Auto-start entry removed.")
     else:
         print("No auto-start entry found.")

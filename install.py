@@ -114,12 +114,16 @@ def main():
 
     # Step 5: Register auto-start and launch
     print("[Step 5/5] Configuring auto-start and launching...")
-    key_path = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
-    exe_path = str(INSTALL_DIR / "FastFileOp.exe") + ' --silent'
-    result = subprocess.run(
-        ["reg", "add", key_path, "/v", "FastFileOp", "/t", "REG_SZ", "/d", f'"{exe_path}"', "/f"],
-        capture_output=True
+    startup_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    startup_dir.mkdir(parents=True, exist_ok=True)
+    exe_path = str(INSTALL_DIR / "FastFileOp.exe")
+    shortcut_path = str(startup_dir / "FastFileOp.lnk")
+    ps_cmd = (
+        f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{shortcut_path}');"
+        f"$s.TargetPath='{exe_path}';$s.Arguments='--silent';"
+        f"$s.WorkingDirectory='{INSTALL_DIR}';$s.Save()"
     )
+    result = subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True)
     if result.returncode == 0:
         print("Auto-start configured.")
     else:
