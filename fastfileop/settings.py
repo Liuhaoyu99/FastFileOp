@@ -233,7 +233,10 @@ class SettingsWindow:
                 confirm_delete=confirm_delete,
             )
 
-            self.config_manager.set_auto_start(auto_start)
+            try:
+                self.config_manager.set_auto_start(auto_start)
+            except Exception as e:
+                logger.error("Failed to set auto-start: %s", e)
 
             from .logger import set_debug_mode
             set_debug_mode(debug_mode)

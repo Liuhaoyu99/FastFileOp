@@ -54,7 +54,7 @@ class LogViewer:
     def __init__(self, op_log: OperationLog, lang: str = LANG_EN):
         self._op_log = op_log
         self._lang = lang
-        self._window: Optional[tk.Toplevel] = None
+        self._window: Optional[tk.Tk] = None
 
     def _tr(self, key: str) -> str:
         return get_text(key, self._lang)
@@ -68,14 +68,10 @@ class LogViewer:
             except tk.TclError:
                 self._window = None
 
-        root = tk.Tk()
-        root.withdraw()
-
-        win = tk.Toplevel(root)
+        win = tk.Tk()
         win.title(self._tr("log_title"))
         win.geometry("620x400")
         win.resizable(True, True)
-        win.transient(root)
 
         frame = ttk.Frame(win, padding=10)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -96,19 +92,21 @@ class LogViewer:
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-        ttk.Button(btn_frame, text=self._tr("log_close"), command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text=self._tr("log_close"), command=self._close).pack(side=tk.RIGHT)
 
         win.update_idletasks()
         x = (win.winfo_screenwidth() - 620) // 2
         y = (win.winfo_screenheight() - 400) // 2
         win.geometry(f"+{x}+{y}")
 
-        win.deiconify()
-        win.lift()
-        win.focus_force()
-
         self._window = win
-        root.mainloop()
+        win.protocol("WM_DELETE_WINDOW", self._close)
+        win.mainloop()
+
+    def _close(self):
+        if self._window:
+            self._window.destroy()
+            self._window = None
 
     @staticmethod
     def fmt_time(ts: float) -> str:
