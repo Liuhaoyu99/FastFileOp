@@ -133,9 +133,6 @@ class MainWindow:
         self._opt_frame = ttk.LabelFrame(win, text=self._tr("options"), padding=10)
         self._opt_frame.pack(fill=tk.X, padx=10, pady=5)
 
-
-        self._lang_combo.pack(side=tk.RIGHT)
-
         self._multi_cb = ttk.Checkbutton(
             self._opt_frame,
             text=self._tr("multi_workers"),
@@ -219,6 +216,7 @@ class MainWindow:
 
     def _re_translate(self):
         """Update all UI text to current language"""
+        self._lang = self.config_manager.config.language or LANG_EN
         self._window.title(self._tr("window_title"))
         self._top_frame.config(text=self._tr("copy_move"))
         self._src_label.config(text=self._tr("source"))

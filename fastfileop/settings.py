@@ -80,10 +80,11 @@ class SettingsWindow:
         canvas.configure(yscrollcommand=vsb.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        # Mouse wheel
+        # Mouse wheel (local bind — only active while mouse is over canvas)
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
         main_frame = ttk.Frame(scroll_frame, padding=20)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -279,5 +280,9 @@ class SettingsWindow:
 
     def _close(self):
         if self._window:
+            try:
+                self._window.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
             self._window.destroy()
             self._window = None
