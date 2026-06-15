@@ -1,16 +1,12 @@
 @echo off
 :: ============================================================
 :: FastFileOp Uninstallation Script
-:: Removes FastFileOp from the system
+:: Uses bundled uninstall.exe (PyInstaller) if available,
+:: otherwise falls back to python -c
 :: Requires Administrator privileges
 :: ============================================================
 
 setlocal enabledelayedexpansion
-
-echo ============================================================
-echo FastFileOp Uninstallation Script
-echo ============================================================
-echo.
 
 :: Check for Administrator privileges
 net session >nul 2>&1
@@ -20,8 +16,19 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
+set "SCRIPT_DIR=%~dp0"
+
+:: Use bundled uninstall.exe if available
+if exist "%SCRIPT_DIR%uninstall.exe" (
+    "%SCRIPT_DIR%uninstall.exe"
+    exit /b %errorlevel%
+)
+
 set "INSTALL_DIR=%ProgramFiles%\FastFileOp"
 
+echo ============================================================
+echo FastFileOp Uninstallation Script
+echo ============================================================
 echo.
 echo WARNING: This will remove FastFileOp from your system.
 echo.
