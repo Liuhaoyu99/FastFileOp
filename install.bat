@@ -101,11 +101,22 @@ if not defined SKIP_DLL (
         pause
         exit /b 1
     )
-    copy /Y "%SCRIPT_DIR%dist\libwinpthread-1.dll" "%INSTALL_DIR%\" >nul 2>nul
+    if exist "%SCRIPT_DIR%dist\libwinpthread-1.dll" (
+        copy /Y "%SCRIPT_DIR%dist\libwinpthread-1.dll" "%INSTALL_DIR%\" >nul
+    )
+    if exist "%SCRIPT_DIR%libwinpthread-1.dll" (
+        copy /Y "%SCRIPT_DIR%libwinpthread-1.dll" "%INSTALL_DIR%\" >nul
+    )
 )
 
 echo Files copied successfully.
 echo.
+
+:: Copy documentation files
+if exist "%SCRIPT_DIR%README.md" copy /Y "%SCRIPT_DIR%README.md" "%INSTALL_DIR%\" >nul
+if exist "%SCRIPT_DIR%README_zh.md" copy /Y "%SCRIPT_DIR%README_zh.md" "%INSTALL_DIR%\" >nul
+if exist "%SCRIPT_DIR%LICENSE" copy /Y "%SCRIPT_DIR%LICENSE" "%INSTALL_DIR%\" >nul
+if exist "%SCRIPT_DIR%benchmark.png" copy /Y "%SCRIPT_DIR%benchmark.png" "%INSTALL_DIR%\" >nul
 
 :: ============================================================
 :: Step 4: Register shell extension
