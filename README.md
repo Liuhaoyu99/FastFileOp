@@ -18,6 +18,8 @@
 - 🛡️ **Watchdog Mechanism** - Auto-recovery from pipe disconnections
 - 🗑️ **Secure Delete** - 3-pass overwrite for permanent deletion
 - ⏯️ **Operation Control** - Pause, resume, and cancel ongoing operations
+- 🌐 **Bilingual UI** - Chinese / English switchable GUI main window
+- 🖥️ **FastCopy-style GUI** - Dedicated operation window with file list & progress
 
 ## Architecture
 
@@ -89,7 +91,7 @@ Run benchmark yourself:
 
 ### Quick Start (Recommended)
 
-1. Download `FastFileOp-v1.1.zip` from the [latest release](https://github.com/Liuhaoyu99/FastFileOp/releases/latest)
+1. Download `FastFileOp-v1.3.zip` from the [latest release](https://github.com/Liuhaoyu99/FastFileOp/releases/latest)
 2. Extract all files to a folder (keep DLL in the same directory as EXE)
 3. Run `install.bat` as Administrator to register the Shell Extension DLL
 4. Launch `FastFileOp.exe` — it will appear in the system tray
@@ -193,7 +195,10 @@ FastFileOp/
 │   ├── clipboard.py         # Clipboard monitor
 │   ├── tray.py              # System tray
 │   ├── config.py            # Configuration
-│   └── settings.py          # Settings GUI
+│   ├── settings.py          # Settings GUI
+│   ├── main_window.py       # FastCopy-style main window
+│   ├── l10n.py              # Chinese / English localization
+│   └── constants.py         # Centralized constants
 ├── FastFileOpShim/          # C++ Shell Extension
 │   ├── CopyHook.cpp         # ICopyHook implementation
 │   ├── PipeClient.cpp       # Named pipe client

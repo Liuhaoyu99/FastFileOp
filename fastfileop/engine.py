@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ── Windows API bindings ──────────────────────────────────────────
 _kernel32 = ctypes.windll.kernel32
 
-# CopyFileW — single kernel call, fastest way to copy a file on Windows
+# CopyFileW — fallback for small files
 _kernel32.CopyFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_int]
 _kernel32.CopyFileW.restype = ctypes.c_int
 
@@ -36,6 +36,12 @@ _kernel32.MoveFileExW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_u
 _kernel32.MoveFileExW.restype = ctypes.c_int
 MOVEFILE_REPLACE_EXISTING = 0x1
 MOVEFILE_WRITE_THROUGH = 0x8
+
+
+
+
+
+
 
 
 class OpState(Enum):
@@ -174,7 +180,7 @@ class FileEngine:
                     p.total_bytes,
                 )
             except Exception as e:
-                logger.error(f"Progress callback error: {e}")
+                logger.error("Progress callback error: %s", e)
 
     def _check_cancelled(self) -> bool:
         """Quick cancel check without pause blocking."""
@@ -188,90 +194,24 @@ class FileEngine:
             time.sleep(0.05)
         return not self._cancel_event.is_set()
 
-    def _copy_single_file(self, src: str, dst: str) -> FileProgress:
-        """Copy a single file using Windows CopyFileW API for maximum speed.
+    def _copy_single_file(self, src: str, dst: str, size: int) -> FileProgress:
+        """Copy a single file using Windows CopyFileW API.
 
-        CopyFileW is a single kernel call that handles all buffering,
-        metadata, and error handling internally — far faster than any
-        Python-level read/write loop.
-
-        Returns FileProgress with size info for the caller to batch-flush.
+        CopyFileW is a single kernel-mode call that handles all buffering
+        and metadata internally — the fastest possible copy path.
+        Size is pre-computed, no redundant stat call needed.
         """
-        fp = FileProgress(src=src, dst=dst)
-
+        fp = FileProgress(src=src, dst=dst, total_bytes=size, copied_bytes=size)
         try:
             if not self._wait_if_paused():
                 return fp
-
-            # CopyFileW — single kernel call, no need to get file size first
             result = _kernel32.CopyFileW(src, dst, 0)
             if not result:
-                # Fallback to shutil if CopyFileW fails
                 shutil.copyfile(src, dst)
-
-            # Get size after copy (only needed for progress reporting)
-            try:
-                file_size = os.path.getsize(src)
-            except OSError:
-                try:
-                    file_size = os.path.getsize(dst)
-                except OSError:
-                    file_size = 0
-
-            fp.total_bytes = file_size
-            fp.copied_bytes = file_size
             fp.done = True
-
         except Exception as e:
             fp.error = str(e)
-            logger.error(f"Copy failed: {src} -> {dst}, error: {e}")
-
-        return fp
-
-    def _copy_directory(self, src_dir: str, dst_dir: str) -> FileProgress:
-        """Copy a directory recursively using CopyFileW for each file."""
-        fp = FileProgress(src=src_dir, dst=dst_dir)
-
-        try:
-            src_path = Path(src_dir)
-            dst_path = Path(dst_dir)
-
-            # Collect all files first, then copy in bulk
-            all_files = [(f, f.relative_to(src_path)) for f in src_path.rglob("*") if f.is_file()]
-
-            # Create all directories upfront (batched, fewer syscalls)
-            dirs_created = set()
-            for _, rel in all_files:
-                target_parent = (dst_path / rel).parent
-                if str(target_parent) not in dirs_created:
-                    target_parent.mkdir(parents=True, exist_ok=True)
-                    dirs_created.add(str(target_parent))
-
-            # Copy files using CopyFileW
-            total_size = 0
-            for src_file, rel in all_files:
-                if self._check_cancelled():
-                    return fp
-                if not self._pause_event.is_set():
-                    if not self._wait_if_paused():
-                        return fp
-
-                target = dst_path / rel
-                result = _kernel32.CopyFileW(str(src_file), str(target), 0)
-                if not result:
-                    shutil.copyfile(str(src_file), str(target))
-
-                sz = src_file.stat().st_size
-                total_size += sz
-
-            fp.total_bytes = total_size
-            fp.copied_bytes = total_size
-            fp.done = True
-
-        except Exception as e:
-            fp.error = str(e)
-            logger.error(f"Directory copy failed: {src_dir} -> {dst_dir}, error: {e}")
-
+            logger.error("Copy failed: %s -> %s, error: %s", src, dst, e)
         return fp
 
     def _same_drive(self, p1: str, p2: str) -> bool:
@@ -333,106 +273,109 @@ class FileEngine:
         os.remove(filepath)
 
     def copy(self, src_list: List[str], dst_dir: str) -> OperationProgress:
-        """Copy files/directories to destination
+        """Copy files/directories to destination.
 
-        Uses batched task assignment: files are divided into N batches
-        (one per worker), each worker processes its batch sequentially.
-        This minimizes ThreadPoolExecutor overhead compared to submitting
-        each file as a separate task.
-
-        Args:
-            src_list: Source paths (files or directories)
-            dst_dir: Destination directory
-
-        Returns:
-            OperationProgress with results
+        Optimizations:
+        1. Flattens directories into individual file tasks upfront
+        2. Pre-computes file sizes in a single pass (no redundant stat calls)
+        3. Skips ThreadPoolExecutor for single-file operations
+        4. Batches per-worker to minimize lock contention
         """
         self._reset_state()
         self._state = OpState.RUNNING
-        logger.info(f"Starting copy: {len(src_list)} items -> {dst_dir}")
+        logger.info("Starting copy: %d items -> %s", len(src_list), dst_dir)
 
         os.makedirs(dst_dir, exist_ok=True)
 
-        # Build task list — defer size calculation to avoid stat() overhead
+        # Flatten all sources into individual file tasks with pre-computed sizes
         tasks = []
-        for i, src in enumerate(src_list):
-            src_name = os.path.basename(src.rstrip("\\/"))
-            dst = os.path.join(dst_dir, src_name)
-            is_dir = os.path.isdir(src)
-            tasks.append((src, dst, is_dir))
+        total_bytes = 0
+        for src in src_list:
+            s = src.rstrip("\\/")
+            name = os.path.basename(s)
+            if os.path.isdir(s):
+                root_dst = os.path.join(dst_dir, name)
+                src_path = Path(s)
+                file_infos = [(f, f.relative_to(src_path)) for f in src_path.rglob("*") if f.is_file()]
+                # Create directory structure upfront (single-threaded, no races)
+                created = set()
+                for _, rel in file_infos:
+                    target_dir = os.path.join(root_dst, str(rel.parent))
+                    if target_dir not in created:
+                        os.makedirs(target_dir, exist_ok=True)
+                        created.add(target_dir)
+                for f, rel in file_infos:
+                    dst = os.path.join(root_dst, str(rel))
+                    sz = f.stat().st_size
+                    tasks.append((str(f), dst, sz))
+                    total_bytes += sz
+            else:
+                dst = os.path.join(dst_dir, name)
+                try:
+                    sz = os.path.getsize(s)
+                except OSError:
+                    # Non-existent file — still track it so _copy_single_file
+                    # can report the error properly
+                    tasks.append((s, dst, 0))
+                    continue
+                tasks.append((s, dst, sz))
+                total_bytes += sz
 
         self._progress.total_files = len(tasks)
-
-        # Calculate total size in parallel with copy (or skip for speed)
-        # We compute it upfront but in a single pass
-        total_bytes = 0
-        for src, _, is_dir in tasks:
-            try:
-                if is_dir:
-                    total_bytes += sum(f.stat().st_size for f in Path(src).rglob("*") if f.is_file())
-                else:
-                    total_bytes += os.path.getsize(src)
-            except OSError:
-                pass
         self._progress.total_bytes = total_bytes
-
         self._notify_progress()
 
-        # Split tasks into batches — one batch per worker
-        num_workers = min(self.max_workers, len(tasks))
-        if num_workers <= 0:
+        if not tasks:
             self._finalize_state()
-            return self._progress
+            return self.progress
 
+        # ── Single file fast path — skip ThreadPoolExecutor entirely ──
+        if len(tasks) == 1:
+            src, dst, size = tasks[0]
+            fp = self._copy_single_file(src, dst, size)
+            self._progress.file_progresses.append(fp)
+            if fp.error is None:
+                self._counter.flush(size, 1, 0)
+            else:
+                self._counter.flush(0, 1, 1)
+            self._finalize_state()
+            return self.progress
+
+        # ── Multi-file: divide into batches for thread pool ──
+        num_workers = min(self.max_workers, len(tasks))
         batches = [[] for _ in range(num_workers)]
         for idx, task in enumerate(tasks):
             batches[idx % num_workers].append(task)
 
         def process_batch(batch):
-            """Process a batch of copy tasks sequentially within one thread.
-
-            Accumulates progress locally and flushes to the shared counter
-            once at the end — minimizes lock contention.
-            """
             results = []
             local_bytes = 0
-            local_completed = 0
+            local_done = 0
             local_failed = 0
-
-            for src, dst, is_dir in batch:
+            for src, dst, size in batch:
                 if self._check_cancelled():
                     break
-                if is_dir:
-                    fp = self._copy_directory(src, dst)
-                else:
-                    fp = self._copy_single_file(src, dst)
+                fp = self._copy_single_file(src, dst, size)
                 results.append(fp)
-
-                if fp.done and fp.error is None:
-                    local_bytes += fp.copied_bytes
-                    local_completed += 1
-                elif fp.error is not None:
+                if fp.error is None:
+                    local_bytes += size
+                    local_done += 1
+                else:
                     local_failed += 1
-                    local_completed += 1
-
-            # Single lock acquisition for the entire batch
-            self._counter.flush(local_bytes, local_completed, local_failed)
+                    local_done += 1
+            self._counter.flush(local_bytes, local_done, local_failed)
             return results
 
-        # Execute with thread pool — one future per batch
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            futures = [executor.submit(process_batch, batch) for batch in batches if batch]
-
+            futures = [executor.submit(process_batch, b) for b in batches if b]
             for future in as_completed(futures):
                 if self._cancel_event.is_set():
                     executor.shutdown(wait=False, cancel_futures=True)
                     break
-
                 try:
-                    batch_results = future.result()
-                    self._progress.file_progresses.extend(batch_results)
+                    self._progress.file_progresses.extend(future.result())
                 except Exception as e:
-                    logger.error(f"Batch failed: {e}")
+                    logger.error("Batch failed: %s", e)
 
         self._finalize_state()
         return self.progress
@@ -445,7 +388,7 @@ class FileEngine:
         """
         self._reset_state()
         self._state = OpState.RUNNING
-        logger.info(f"Starting move: {len(src_list)} items -> {dst_dir}")
+        logger.info("Starting move: %d items -> %s", len(src_list), dst_dir)
 
         os.makedirs(dst_dir, exist_ok=True)
 
@@ -498,7 +441,7 @@ class FileEngine:
 
             except Exception as e:
                 fp.error = str(e)
-                logger.error(f"Rename failed: {src} -> {dst}, error: {e}")
+                logger.error("Rename failed: %s -> %s, error: %s", src, dst, e)
                 self._counter.flush(0, 1, 1)
 
             self._notify_progress(src)
@@ -517,7 +460,7 @@ class FileEngine:
                             else:
                                 os.remove(fp.src)
                         except Exception as e:
-                            logger.error(f"Failed to delete source: {fp.src}, error: {e}")
+                            logger.error("Failed to delete source: %s, error: %s", fp.src, e)
 
         self._finalize_state()
         return self.progress
@@ -532,7 +475,7 @@ class FileEngine:
         self._reset_state()
         self._state = OpState.RUNNING
         mode = "permanent" if permanent else "recycle"
-        logger.info(f"Starting delete ({mode}): {len(file_list)} items")
+        logger.info("Starting delete (%s): %d items", mode, len(file_list))
 
         self._progress.total_files = len(file_list)
 
@@ -562,7 +505,7 @@ class FileEngine:
 
             except Exception as e:
                 fp.error = str(e)
-                logger.error(f"Delete failed: {src}, error: {e}")
+                logger.error("Delete failed: %s, error: %s", src, e)
                 self._counter.flush(0, 1, 1)
 
             self._notify_progress(src)
@@ -649,8 +592,8 @@ class FileEngine:
         p = self.progress
         success_count = p.completed_files - p.failed_files
         logger.info(
-            f"Operation complete: state={self._state.name}, "
-            f"success={success_count}, failed={p.failed_files}"
+            "Operation complete: state=%s, success=%d, failed=%d",
+            self._state.name, success_count, p.failed_files,
         )
 
     def get_failed(self) -> List[FileProgress]:

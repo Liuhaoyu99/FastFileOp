@@ -18,6 +18,8 @@
 - 🛡️ **看门狗机制** - 管道断开后自动恢复
 - 🗑️ **安全删除** - 3 次覆写永久删除
 - ⏯️ **操作控制** - 暂停、恢复、取消正在进行的操作
+- 🌐 **双语界面** - 中文/英文可切换的主操作窗口
+- 🖥️ **FastCopy 风格 GUI** - 独立操作窗口，含文件列表与进度显示
 
 ## 架构图
 
@@ -89,7 +91,7 @@ Windows:     646 MB/s  (顺序, shutil.copy2)
 
 ### 快速开始（推荐）
 
-1. 从 [最新发行版](https://github.com/Liuhaoyu99/FastFileOp/releases/latest) 下载 `FastFileOp-v1.1.zip`
+1. 从 [最新发行版](https://github.com/Liuhaoyu99/FastFileOp/releases/latest) 下载 `FastFileOp-v1.3.zip`
 2. 将所有文件解压到一个文件夹（DLL 必须和 EXE 在同一目录）
 3. 以管理员身份运行 `install.bat` 注册 Shell 扩展 DLL
 4. 启动 `FastFileOp.exe` — 程序会出现在系统托盘中
@@ -193,7 +195,10 @@ FastFileOp/
 │   ├── clipboard.py         # 剪贴板监控
 │   ├── tray.py              # 系统托盘
 │   ├── config.py            # 配置管理
-│   └── settings.py          # 设置界面
+│   ├── settings.py          # 设置界面
+│   ├── main_window.py       # FastCopy 风格主窗口
+│   ├── l10n.py              # 中文/英文多语言支持
+│   └── constants.py         # 集中常量定义
 ├── FastFileOpShim/          # C++ Shell 扩展
 │   ├── CopyHook.cpp         # ICopyHook 实现
 │   ├── PipeClient.cpp       # 命名管道客户端

@@ -25,6 +25,7 @@ from .notify import show_toast
 from .pipe_server import PipeServer
 from .register import ensure_dll_registered, is_dll_registered, register_dll, get_dll_path, run_as_admin
 from .shell import ShellHelper
+from .main_window import MainWindow
 from .settings import SettingsWindow
 from .tray import TrayIcon
 
@@ -95,6 +96,7 @@ class FastFileOpApp:
             on_exit=self._quit,
             on_toggle_pause=self._on_pause_toggle,
             on_resume_interception=self._on_resume_interception,
+            on_open_main=self._open_main,
         )
 
         # Named pipe server with watchdog
@@ -137,6 +139,15 @@ class FastFileOpApp:
             "FastFileOp - Instability Detected",
             "Interception paused due to instability. Check logs for details. Use tray menu to resume."
         )
+
+    def _open_main(self):
+        """Open main operation window in separate thread"""
+        def _show():
+            main_win = MainWindow(self.config_manager)
+            main_win.show()
+
+        thread = threading.Thread(target=_show, daemon=True)
+        thread.start()
 
     def _open_settings(self):
         """Open settings window in separate thread"""

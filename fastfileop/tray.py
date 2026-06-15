@@ -87,6 +87,7 @@ class TrayIcon:
         on_exit: Callable,
         on_toggle_pause: Optional[Callable] = None,
         on_resume_interception: Optional[Callable] = None,
+        on_open_main: Optional[Callable] = None,
     ):
         """
         Args:
@@ -95,12 +96,14 @@ class TrayIcon:
             on_exit: Callback to exit application
             on_toggle_pause: Optional callback when pause state changes
             on_resume_interception: Callback to resume from instability
+            on_open_main: Callback to open the main operation window
         """
         self.config_manager = config_manager
         self.on_settings = on_settings
         self.on_exit = on_exit
         self.on_toggle_pause = on_toggle_pause
         self.on_resume_interception = on_resume_interception
+        self.on_open_main = on_open_main
 
         self._icon: Optional[pystray.Icon] = None
         self._paused = config_manager.config.paused
@@ -132,6 +135,11 @@ class TrayIcon:
                     "Resume Interception",
                     self._resume_interception,
                 ),
+                pystray.MenuItem(
+                    "Open FastFileOp...",
+                    self._open_main,
+                ),
+                pystray.Menu.SEPARATOR,
                 pystray.MenuItem(
                     "Settings...",
                     self._open_settings,
@@ -168,6 +176,11 @@ class TrayIcon:
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
+                "Open FastFileOp...",
+                self._open_main,
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
                 pause_label,
                 self._toggle_pause,
             ),
@@ -201,6 +214,14 @@ class TrayIcon:
 
         if self.on_resume_interception:
             self.on_resume_interception()
+
+    def _open_main(self, icon, item):
+        """Open main operation window"""
+        try:
+            if self.on_open_main:
+                self.on_open_main()
+        except Exception as e:
+            logger.error(f"Failed to open main window: {e}")
 
     def _open_settings(self, icon, item):
         """Open settings window"""
